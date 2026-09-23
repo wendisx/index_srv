@@ -301,4 +301,4 @@ INDEX_SRV_PORT=9000 npm start   # 换端口
 
 ## License
 
-Private / personal use.
+[MIT](./LICENSE)
