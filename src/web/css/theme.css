@@ -1,0 +1,201 @@
+/* ==========================================================================
+   设计令牌（Design Tokens）
+   - 数值体系对齐 shadcn/ui 默认主题（neutral 灰阶）
+   - 直角风格：--radius 固定为 0，不使用圆角
+   - 无动效：本文件不定义 transition / animation，页面不做任何动画
+   - 主题切换：仅通过 <html> 上的 data-theme / data-accent 属性生效
+   ========================================================================== */
+
+:root {
+  color-scheme: light;
+
+  /* 基础色板 */
+  --background: 0 0% 100%;
+  --foreground: 240 10% 3.9%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 3.9%;
+
+  --muted: 240 4.8% 95.9%;
+  --muted-foreground: 240 3.8% 46.1%;
+
+  --accent: 240 4.8% 95.9%;
+  --accent-foreground: 240 5.9% 10%;
+
+  --border: 240 5.9% 90%;
+  --input: 240 5.9% 90%;
+  --ring: 240 5.9% 10%;
+
+  /* 强调色（由 data-accent 覆盖） */
+  --primary: 240 5.9% 10%;
+  --primary-foreground: 0 0% 98%;
+
+  /* 服务状态色：红 stopped / 绿 running / 蓝 coming / 黄 developing */
+  --status-running: 142.1 76.2% 36.3%;
+  --status-stopped: 0 72.2% 50.6%;
+  --status-coming: 221.2 83.2% 53.3%;
+  --status-developing: 32.6 94.6% 43.7%;
+
+  /* 形体 */
+  --radius: 0px;
+  --border-width: 1px;
+  --ring-width: 2px;
+
+  /* 字体 */
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+    "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+  /* 字号 */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-lg: 16px;
+  --text-xl: 20px;
+
+  /* 间距 */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+
+  /* 代码高亮（服务 JSON 编辑器）：自成一组的语法色，不复用状态色的语义 */
+  --code-key: 221.2 83.2% 45%;
+  --code-string: 142.1 70% 32%;
+  --code-number: 24 90% 42%;
+  --code-literal: 262.1 70% 52%;
+
+  /* 页面背景图：明暗主题各一张（此处为亮色，暗色在下方覆盖）。
+     --page-veil 压在图片之上、内容之下，用来把底图调淡以保证前景对比度；
+     把 --page-image 设为 none 即可关闭底图（此时浏览器不会请求该图片） */
+  --page-image: url("../assets/bg-light.png");
+  --page-veil: hsl(0 0% 100% / 0.58);
+
+  /* 页头是 sticky 的半透明层（见 components.css 的 .app-header）：这里只给透明度，
+     颜色仍取 --background，所以明暗主题自动跟随。
+     0.5 = 50% 透明度（既定取值）：正文对比度仍远高于 AA（最坏情况 12:1），
+     secondary 文字落到 2.88:1（略低于非文本门槛 3:1）—— check-static 会把实测值
+     作为提示报出来，并反解出达标所需的取值（≥ 0.6） */
+  --header-veil: 0.5;
+
+  /* 布局：整站内容宽度固定为视口的 80% */
+  --shell-width: 80%;
+  --sidebar-width: 260px;
+  --header-height: 64px;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --background: 240 10% 3.9%;
+  --foreground: 0 0% 98%;
+
+  --card: 240 10% 5.9%;
+  --card-foreground: 0 0% 98%;
+
+  --muted: 240 3.7% 15.9%;
+  --muted-foreground: 240 5% 64.9%;
+
+  --accent: 240 3.7% 15.9%;
+  --accent-foreground: 0 0% 98%;
+
+  --border: 240 3.7% 15.9%;
+  --input: 240 3.7% 15.9%;
+  --ring: 240 4.9% 83.9%;
+
+  --primary: 0 0% 98%;
+  --primary-foreground: 240 5.9% 10%;
+
+  /* 服务状态色（暗色下提高亮度以保证对比度） */
+  --status-running: 142.1 70.6% 45.3%;
+  --status-stopped: 0 72.2% 58%;
+  --status-coming: 217.2 91.2% 59.8%;
+  --status-developing: 37.7 92.1% 50.2%;
+
+  /* 代码高亮（暗色下提高亮度以保证对比度） */
+  --code-key: 217.2 91.2% 66%;
+  --code-string: 142.1 70.6% 52%;
+  --code-number: 37.7 92.1% 58%;
+  --code-literal: 263.4 85% 74%;
+
+  /* 夜景底图：叠一层近底色把底图压暗到不与内容争视线 */
+  --page-image: url("../assets/bg-night.jpg");
+  --page-veil: hsl(240 10% 3.9% / 0.58);
+}
+
+/* ==========================================================================
+   强调色主题（data-accent）
+   ========================================================================== */
+
+[data-accent="slate"] {
+  --primary: 215.4 16.3% 46.9%;
+  --primary-foreground: 210 40% 98%;
+  --ring: 215.4 16.3% 46.9%;
+}
+
+[data-theme="dark"][data-accent="slate"] {
+  --primary: 215 20.2% 65.1%;
+  --primary-foreground: 222.2 47.4% 11.2%;
+  --ring: 215 20.2% 65.1%;
+}
+
+[data-accent="blue"] {
+  --primary: 221.2 83.2% 53.3%;
+  --primary-foreground: 210 40% 98%;
+  --ring: 221.2 83.2% 53.3%;
+}
+
+[data-theme="dark"][data-accent="blue"] {
+  --primary: 217.2 91.2% 59.8%;
+  --primary-foreground: 222.2 47.4% 11.2%;
+  --ring: 217.2 91.2% 59.8%;
+}
+
+[data-accent="green"] {
+  --primary: 142.1 76.2% 36.3%;
+  --primary-foreground: 355.7 100% 97.3%;
+  --ring: 142.1 76.2% 36.3%;
+}
+
+[data-theme="dark"][data-accent="green"] {
+  --primary: 142.1 70.6% 45.3%;
+  --primary-foreground: 144.9 80.4% 10%;
+  --ring: 142.1 70.6% 45.3%;
+}
+
+[data-accent="violet"] {
+  --primary: 262.1 83.3% 57.8%;
+  --primary-foreground: 210 20% 98%;
+  --ring: 262.1 83.3% 57.8%;
+}
+
+[data-theme="dark"][data-accent="violet"] {
+  --primary: 263.4 70% 50.4%;
+  --primary-foreground: 210 20% 98%;
+  --ring: 263.4 70% 50.4%;
+}
+
+[data-accent="amber"] {
+  --primary: 32.6 94.6% 43.7%;
+  --primary-foreground: 26 83.3% 14.1%;
+  --ring: 32.6 94.6% 43.7%;
+}
+
+[data-theme="dark"][data-accent="amber"] {
+  --primary: 37.7 92.1% 50.2%;
+  --primary-foreground: 26 83.3% 14.1%;
+  --ring: 37.7 92.1% 50.2%;
+}
+
+[data-accent="rose"] {
+  --primary: 346.8 77.2% 49.8%;
+  --primary-foreground: 355.7 100% 97.3%;
+  --ring: 346.8 77.2% 49.8%;
+}
+
+[data-theme="dark"][data-accent="rose"] {
+  --primary: 346.8 77.2% 49.8%;
+  --primary-foreground: 355.7 100% 97.3%;
+  --ring: 346.8 77.2% 49.8%;
+}

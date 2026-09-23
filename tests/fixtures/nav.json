@@ -1,0 +1,296 @@
+{
+  "ok": true,
+  "data": {
+    "settings": {
+      "title": "Index Services",
+      "description": "个人云服务索引面板",
+      "theme": "auto",
+      "accent": "neutral",
+      "showDescription": true,
+      "showTags": true,
+      "openInNewTab": true
+    },
+    "permission": {
+      "level": 3,
+      "role": "user",
+      "secretRequired": false,
+      "reason": "unconfigured"
+    },
+    "namespaces": [
+      {
+        "id": "ns-monitor",
+        "name": "监控",
+        "description": "指标、日志与告警",
+        "order": 0,
+        "serviceCount": 4
+      },
+      {
+        "id": "ns-infra",
+        "name": "基础设施",
+        "description": "网关、容器与存储",
+        "order": 1,
+        "serviceCount": 3
+      },
+      {
+        "id": "ns-tools",
+        "name": "工具",
+        "description": "日常开发与运维",
+        "order": 2,
+        "serviceCount": 2
+      },
+      {
+        "id": "ns-bare",
+        "name": "无描述命名空间",
+        "description": "",
+        "order": 3,
+        "serviceCount": 1
+      }
+    ],
+    "sites": [
+      {
+        "id": "s-orphan",
+        "namespaceId": "ns-monitor",
+        "name": "孤儿服务",
+        "url": "http://127.0.0.1:4321",
+        "description": "所属命名空间不存在",
+        "icon": "",
+        "tags": [
+          "orphan"
+        ],
+        "status": "running",
+        "attributes": {},
+        "order": 0,
+        "enabled": true
+      },
+      {
+        "id": "s-grafana",
+        "namespaceId": "ns-monitor",
+        "name": "Grafana",
+        "url": "http://127.0.0.1:3000",
+        "description": "指标可视化看板",
+        "icon": "",
+        "tags": [
+          "metrics",
+          "dashboard"
+        ],
+        "status": "running",
+        "attributes": {
+          "port": 3000,
+          "version": "11.2.0",
+          "owner": "ops",
+          "backup": "每日 03:00"
+        },
+        "order": 0,
+        "enabled": true
+      },
+      {
+        "id": "s-nginx",
+        "namespaceId": "ns-infra",
+        "name": "Nginx",
+        "url": "http://127.0.0.1:81",
+        "description": "反向代理入口",
+        "icon": "",
+        "tags": [
+          "gateway"
+        ],
+        "status": "running",
+        "attributes": {
+          "port": 81,
+          "upstream": "index-srv:8080",
+          "tls": "Let's Encrypt"
+        },
+        "order": 0,
+        "enabled": true
+      },
+      {
+        "id": "s-sparse",
+        "namespaceId": "ns-bare",
+        "name": "sparse",
+        "url": "http://127.0.0.1:1234",
+        "description": "",
+        "icon": "",
+        "tags": [],
+        "status": "stopped",
+        "attributes": {},
+        "order": 0,
+        "enabled": true
+      },
+      {
+        "id": "s-ttyd",
+        "namespaceId": "ns-tools",
+        "name": "ttyd",
+        "url": "http://127.0.0.1:7681",
+        "description": "浏览器终端",
+        "icon": "",
+        "tags": [
+          "shell"
+        ],
+        "status": "running",
+        "attributes": {
+          "port": 7681,
+          "shell": "/bin/bash",
+          "readonly": false
+        },
+        "order": 0,
+        "enabled": true
+      },
+      {
+        "id": "s-code-server",
+        "namespaceId": "ns-tools",
+        "name": "code-server 浏览器内的开发环境（名称刻意写得非常长：用于验证详情头部与左侧目录树的标题都始终单行显示、超出容器时按宽度截断并由 tooltip 展示完整名称，同时验证超长文本不会撑破页头与布局）",
+        "url": "http://127.0.0.1:8443",
+        "description": "浏览器内 VS Code，尚未对外开放",
+        "icon": "",
+        "tags": [
+          "editor"
+        ],
+        "status": "coming",
+        "attributes": {},
+        "order": 1,
+        "enabled": true
+      },
+      {
+        "id": "s-portainer",
+        "namespaceId": "ns-infra",
+        "name": "Portainer",
+        "url": "https://127.0.0.1:9443",
+        "description": "容器管理面板",
+        "icon": "",
+        "tags": [
+          "docker"
+        ],
+        "status": "running",
+        "attributes": {
+          "port": 9443,
+          "protocol": "https",
+          "agent": true
+        },
+        "order": 1,
+        "enabled": true
+      },
+      {
+        "id": "s-prometheus",
+        "namespaceId": "ns-monitor",
+        "name": "Prometheus",
+        "url": "http://127.0.0.1:9090",
+        "description": "时序指标采集与查询",
+        "icon": "",
+        "tags": [
+          "metrics"
+        ],
+        "status": "running",
+        "attributes": {
+          "port": 9090,
+          "retention": "15d",
+          "scrape_interval": "30s"
+        },
+        "order": 1,
+        "enabled": true
+      },
+      {
+        "id": "s-alertmanager",
+        "namespaceId": "ns-monitor",
+        "name": "Alertmanager",
+        "url": "http://127.0.0.1:9093",
+        "description": "告警聚合与路由",
+        "icon": "",
+        "tags": [
+          "alert"
+        ],
+        "status": "developing",
+        "attributes": {
+          "port": 9093,
+          "channel": "#alerts",
+          "note": "接收器规则仍在调试"
+        },
+        "order": 2,
+        "enabled": true
+      },
+      {
+        "id": "s-minio",
+        "namespaceId": "ns-infra",
+        "name": "MinIO",
+        "url": "http://127.0.0.1:9001",
+        "description": "对象存储控制台",
+        "icon": "",
+        "tags": [
+          "storage",
+          "s3"
+        ],
+        "status": "stopped",
+        "attributes": {
+          "port": 9001,
+          "bucket": "backup",
+          "note": "磁盘扩容中，暂时下线"
+        },
+        "order": 2,
+        "enabled": true
+      },
+      {
+        "id": "s-render-demo",
+        "namespaceId": "ns-tools",
+        "name": "值渲染样例",
+        "url": "http://127.0.0.1:7000",
+        "description": "",
+        "icon": "",
+        "tags": [],
+        "status": "running",
+        "attributes": {
+          "text": "普通字符串",
+          "count": 7000,
+          "flag": true,
+          "nil": null,
+          "emptyText": "",
+          "emptyList": [],
+          "slice": [
+            "alpha",
+            "beta",
+            "gamma"
+          ],
+          "sliceMixed": [
+            1,
+            "two",
+            false,
+            null
+          ],
+          "sliceOfObject": [
+            {
+              "name": "api",
+              "port": 5432
+            },
+            {
+              "name": "worker",
+              "port": 5433
+            }
+          ],
+          "object": {
+            "host": "127.0.0.1",
+            "port": 5432,
+            "tls": true,
+            "nested": {
+              "ttl": 30,
+              "tags": [
+                "x",
+                "y"
+              ]
+            }
+          },
+          "emptyObject": {},
+          "longText": "这是一段较长的文本，用于确认文本类型在行内换行时的表现是否符合预期。"
+        },
+        "order": 2,
+        "enabled": true
+      }
+    ],
+    "stats": {
+      "namespaces": 4,
+      "services": 11,
+      "disabledServices": 1,
+      "running": 7,
+      "stopped": 2,
+      "coming": 1,
+      "developing": 1,
+      "updatedAt": "2026-09-22T12:49:27.967Z"
+    }
+  }
+}

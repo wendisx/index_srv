@@ -1,0 +1,24 @@
+{
+  "version": 3,
+  "updatedAt": "2026-09-23T06:45:37.793Z",
+  "namespaces": [
+    {
+      "id": "ns-monitor",
+      "name": "监控",
+      "description": "指标、日志与告警",
+      "order": 0
+    },
+    {
+      "id": "ns-infra",
+      "name": "基础设施",
+      "description": "网关、容器与存储",
+      "order": 1
+    },
+    {
+      "id": "ns-tools",
+      "name": "工具",
+      "description": "日常开发与运维",
+      "order": 2
+    }
+  ]
+}

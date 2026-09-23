@@ -1,0 +1,23 @@
+{
+  "name": "index-srv",
+  "version": "0.1.0",
+  "private": true,
+  "description": "轻量级服务索引 dashboard：零依赖 Node.js API 服务 + 原生 Web UI",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "check": "node --check src/server.js",
+    "test": "node tests/run.mjs",
+    "test:update": "node tests/check-render.mjs --update",
+    "icons": "node scripts/build-icons.mjs",
+    "vendor": "node scripts/vendor-codejar.mjs"
+  },
+  "devDependencies": {
+    "codejar": "^4.3.0",
+    "lucide-static": "^1.47.0"
+  }
+}

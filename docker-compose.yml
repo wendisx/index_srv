@@ -1,0 +1,62 @@
+# index-srv 容器编排
+#
+# 使用：
+#   cp .env.example .env      # 按需修改端口、令牌与日志级别
+#   docker compose up -d --build
+#
+# 约定：
+#   - ./data 为宿主机本地文件系统，挂载到容器 /app/data（配置与日志都落在这里）
+#   - 容器内端口固定 8080，宿主机端口由 INDEX_SRV_PORT 控制
+#   - 默认只监听 127.0.0.1，需对外暴露时把 INDEX_SRV_BIND 改为 0.0.0.0
+
+services:
+  index-srv:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: index-srv:${INDEX_SRV_TAG:-latest}
+    container_name: index-srv
+    restart: unless-stopped
+
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      INDEX_SRV_ROOT: /app
+      INDEX_SRV_HOST: 0.0.0.0
+      # 容器内监听端口，与下方映射的容器侧保持一致，请勿单独修改
+      INDEX_SRV_PORT: "8080"
+      INDEX_SRV_LOG_LEVEL: ${INDEX_SRV_LOG_LEVEL:-info}
+      # 服务密钥：留空则面板只读（权限固定 3 user）；设置后可在界面提升为 super
+      # 本机要写入时不要改这里，放到同目录的 .env（已被 .gitignore 忽略）：
+      #   echo "INDEX_SRV_SECRET=$(openssl rand -hex 24)" >> .env
+      INDEX_SRV_SECRET: ${INDEX_SRV_SECRET:-}
+      # 需要跨域访问 API 时开启（逗号分隔，* 表示全部放行）
+      # INDEX_SRV_CORS_ORIGINS: "https://nav.example.com"
+
+    ports:
+      - "${INDEX_SRV_BIND:-127.0.0.1}:${INDEX_SRV_PORT:-8080}:8080"
+
+    volumes:
+      - ./data:/app/data
+
+    # 宿主机 data/ 属主不是 uid 1000 时，取消注释并填入实际 uid:gid
+    # user: "1000:1000"
+
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:8080/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

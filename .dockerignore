@@ -1,0 +1,14 @@
+.git
+.gitignore
+node_modules
+npm-debug.log*
+
+# 运行期数据由宿主机挂载，不进入镜像
+data
+
+# 文档、回归套件与本地环境配置无需进入镜像
+docs
+readme.md
+tests
+.env
+.env.example

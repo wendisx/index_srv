@@ -1,0 +1,115 @@
+/* ==========================================================================
+   基础层：重置、排版、通用工具类
+   ========================================================================== */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: hsl(var(--background));
+  /* 页面底图（令牌见 theme.css 的 --page-image / --page-veil）：
+     叠层在上、图片在下，固定在视口上按比例铺满 —— 面板保持不透明，底图只在
+     主体四周、面板间隙与页脚露出 */
+  background-image: linear-gradient(var(--page-veil), var(--page-veil)), var(--page-image);
+  background-attachment: fixed;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  color: hsl(var(--foreground));
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+p {
+  margin: 0;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button,
+input,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+img,
+svg {
+  display: block;
+  max-width: 100%;
+}
+
+code,
+kbd {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+/* 键盘可达性：统一使用 --ring 作为聚焦指示 */
+:focus-visible {
+  outline: var(--ring-width) solid hsl(var(--ring));
+  outline-offset: 1px;
+}
+
+/* 工具类 */
+
+/* 全站内容宽度约束：占视口 80%，行高区域（页头/主体/页脚）共用 */
+.shell {
+  width: var(--shell-width);
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+.icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+

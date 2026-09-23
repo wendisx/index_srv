@@ -1,0 +1,15 @@
+node_modules/
+dist/
+
+# 运行期数据：日志不入库（data/conf 与 data/section 下为可编辑的默认数据，保留版本管理）
+data/log/
+*.tmp
+*.log
+
+# 本地环境覆盖
+.env
+.env.local
+
+# 本地备份与系统文件（readme 建议的 cp -r data data.bak 会落在仓库根目录）
+data.bak/
+.DS_Store

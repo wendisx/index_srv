@@ -1,0 +1,31 @@
+{
+  "name": "index-srv",
+  "version": "0.1.0",
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "requestLimitBytes": 262144,
+    "cors": {
+      "enabled": false,
+      "origins": []
+    }
+  },
+  "storage": {
+    "dataDir": "data",
+    "logDir": "log",
+    "confDir": "conf",
+    "sectionDir": "section",
+    "legacyConfFile": "conf/sites.json",
+    "serviceSchemaFile": "conf/service.schema.json"
+  },
+  "web": {
+    "dir": "src/web",
+    "index": "index.html",
+    "cacheMaxAge": 0
+  },
+  "log": {
+    "level": "info",
+    "toStdout": true,
+    "toFile": true
+  }
+}

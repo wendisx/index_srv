@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="light" data-accent="neutral">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <meta name="description" content="轻量级服务索引面板" />
+    <title>Index Services</title>
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="stylesheet" href="./css/theme.css" />
+    <link rel="stylesheet" href="./css/base.css" />
+    <link rel="stylesheet" href="./css/components.css" />
+    <script src="./js/theme-init.js"></script>
+    <script type="module" src="./js/app.js"></script>
+  </head>
+
+  <body class="app">
+    <!--
+      图标统一来自 lucide-static：由 `npm run icons` 生成 src/web/icons/sprite.svg，
+      页面通过 <use href="./icons/sprite.svg#<名称>"> 外链引用。
+      布局：header / main / footer 三段，内容宽度统一由 .shell 约束为视口的 80%。
+    -->
+
+    <header class="app-header">
+      <div class="shell app-header__inner">
+        <div class="perm">
+          <button
+            id="perm-btn"
+            class="perm-box"
+            type="button"
+            aria-haspopup="dialog"
+            aria-expanded="false"
+            aria-controls="perm-modal"
+          >
+            <span class="perm-box__value" id="perm-value">—</span>
+            <span class="perm-box__role" id="perm-role">user</span>
+          </button>
+        </div>
+
+        <h1 class="brand__title" data-bind="title">Index Services</h1>
+
+        <div class="header__tools">
+          <div class="field">
+            <label class="sr-only" for="search">搜索</label>
+            <input id="search" class="input" type="search" placeholder="search" autocomplete="off" spellcheck="false" />
+          </div>
+
+          <div class="field">
+            <label class="sr-only" for="accent">主题选择</label>
+            <select id="accent" class="select"></select>
+          </div>
+
+          <button id="theme-btn" class="btn btn--icon" type="button" title="切换模式">
+            <svg class="icon" id="theme-icon-auto" hidden><use href="./icons/sprite.svg#monitor" /></svg>
+            <svg class="icon" id="theme-icon-light" hidden><use href="./icons/sprite.svg#sun" /></svg>
+            <svg class="icon" id="theme-icon-dark" hidden><use href="./icons/sprite.svg#moon" /></svg>
+            <span class="sr-only" id="theme-label">切换模式</span>
+          </button>
+
+          <button id="refresh-btn" class="btn btn--icon" type="button" title="刷新">
+            <svg class="icon"><use href="./icons/sprite.svg#refresh-cw" /></svg>
+            <span class="sr-only">刷新</span>
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="app-main">
+      <div class="shell app-main__inner">
+        <aside class="sidebar">
+          <div class="sidebar__head">
+            <span class="sidebar__title">namespace</span>
+            <span class="sidebar__actions">
+              <span class="badge" id="tree-count">0</span>
+              <!-- 新建命名空间：仅 super（权限 0）可见 -->
+              <button
+                id="add-namespace"
+                class="icon-btn"
+                type="button"
+                aria-label="新建命名空间"
+                aria-haspopup="dialog"
+                aria-controls="perm-modal"
+                hidden
+              >
+                <svg class="icon" aria-hidden="true"><use href="./icons/sprite.svg#plus" /></svg>
+              </button>
+            </span>
+          </div>
+          <nav class="tree" id="tree" aria-label="服务目录"></nav>
+        </aside>
+
+        <section class="detail" id="detail" aria-live="polite"></section>
+      </div>
+    </main>
+
+    <footer class="app-footer">
+      <div class="shell app-footer__inner">
+        <span class="stat">
+          <span class="stat__label">namespace</span>
+          <span class="stat__value" id="stat-namespaces">0</span>
+        </span>
+        <span class="stat">
+          <span class="stat__label">running</span>
+          <span class="stat__value" id="stat-running">0/0</span>
+        </span>
+        <span class="stat stat--time">
+          <span class="stat__label">LAST MODIFY</span>
+          <span class="stat__value" id="stat-updated">—</span>
+        </span>
+      </div>
+    </footer>
+
+    <!-- 渲染模板：JS 仅克隆并填充文本，不拼接 HTML 字符串 -->
+    <template id="tpl-namespace">
+      <div class="node">
+        <div class="node__row">
+          <button class="node__head" type="button" aria-expanded="true">
+            <svg class="icon node__chevron" aria-hidden="true"><use href="./icons/sprite.svg#chevron-right" /></svg>
+            <span class="node__name"></span>
+            <span class="badge node__count"></span>
+          </button>
+          <!-- 在该命名空间下添加服务：仅 super（权限 0）可见，aria-label 由渲染层补上名称 -->
+          <button class="node__add icon-btn" type="button" hidden>
+            <svg class="icon" aria-hidden="true"><use href="./icons/sprite.svg#plus" /></svg>
+          </button>
+        </div>
+        <ul class="node__list"></ul>
+      </div>
+    </template>
+
+    <template id="tpl-service">
+      <li class="svc">
+        <button class="svc__btn" type="button">
+          <span class="svc__name"></span>
+        </button>
+      </li>
+    </template>
+
+    <template id="tpl-detail">
+      <div class="detail__head">
+        <h2 class="detail__title"></h2>
+        <!-- 编辑服务 JSON：仅 super 可见，aria-label 由渲染层补上名称 -->
+        <button class="detail__edit icon-btn" type="button" hidden>
+          <svg class="icon" aria-hidden="true"><use href="./icons/sprite.svg#pencil" /></svg>
+        </button>
+        <!-- 打开服务地址：只有图标，名称由渲染层写入 aria-label / title（与左侧编辑入口一致） -->
+        <a class="detail__open icon-btn" target="_blank" rel="noreferrer noopener">
+          <svg class="icon" aria-hidden="true"><use href="./icons/sprite.svg#external-link" /></svg>
+        </a>
+      </div>
+      <dl class="kv"></dl>
+    </template>
+
+    <template id="tpl-kv">
+      <div class="kv__row">
+        <dt class="kv__key"></dt>
+        <dd class="kv__value"></dd>
+      </div>
+    </template>
+
+    <template id="tpl-empty">
+      <div class="empty">
+        <p class="empty__title"></p>
+        <p class="empty__hint"></p>
+      </div>
+    </template>
+
+    <template id="tpl-toast">
+      <div class="toast" role="status">
+        <svg class="icon toast__icon" aria-hidden="true"><use href="./icons/sprite.svg#info" /></svg>
+        <div class="toast__body">
+          <p class="toast__topic"></p>
+          <p class="toast__content"></p>
+        </div>
+      </div>
+    </template>
+
+    <!-- 提示消息容器：右上角滑入，同一时刻只保留一条 -->
+    <div id="toasts" class="toasts" aria-live="polite" aria-atomic="true"></div>
+
+    <!--
+      服务 JSON 编辑器：CodeJar 挂在 #editor-host 上（contenteditable），
+      入口是详情面板的编辑按钮（仅 super 可见）；Esc 或点击遮罩关闭。
+    -->
+    <div id="editor-modal" class="modal modal--editor" hidden>
+      <div class="editor">
+        <div class="editor__head">
+          <span class="editor__title" id="editor-title">service</span>
+          <span class="editor__id" id="editor-id"></span>
+          <span class="editor__actions">
+            <button
+              id="editor-reset"
+              class="icon-btn"
+              type="button"
+              title="重置为初始内容"
+              aria-label="重置为初始内容"
+            >
+              <svg class="icon" aria-hidden="true"><use href="./icons/sprite.svg#rotate-ccw" /></svg>
+            </button>
+            <button id="editor-cancel" class="icon-btn" type="button" title="取消" aria-label="取消">
+              <svg class="icon" aria-hidden="true"><use href="./icons/sprite.svg#x" /></svg>
+            </button>
+            <button id="editor-save" class="icon-btn" type="button" title="保存" aria-label="保存">
+              <svg class="icon" aria-hidden="true"><use href="./icons/sprite.svg#check" /></svg>
+            </button>
+          </span>
+        </div>
+        <div
+          id="editor-host"
+          class="editor__host"
+          contenteditable="true"
+          spellcheck="false"
+          role="textbox"
+          aria-multiline="true"
+          aria-labelledby="editor-title editor-id"
+        ></div>
+        <p class="editor__status" id="editor-status" role="status"></p>
+      </div>
+    </div>
+
+    <!--
+      服务密钥弹窗：中部只有一个输入框，不含任何可见文本
+      （Enter 提交、Esc 或点击遮罩关闭；aria-label 仅供读屏使用）
+    -->
+    <div id="perm-modal" class="modal" hidden>
+      <input
+        id="perm-input"
+        class="input input--modal"
+        type="password"
+        aria-label="服务密钥"
+        autocomplete="off"
+        spellcheck="false"
+      />
+    </div>
+  </body>
+</html>

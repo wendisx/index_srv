@@ -1,0 +1,897 @@
+/* ==========================================================================
+   组件层：页头（权限 / 标题 / 工具栏）、侧栏目录树、详情、页脚
+   约定：使用 CSS 变量着色；统一直角（--radius 为 0）；不使用过渡与关键帧动效
+   ========================================================================== */
+
+/* 单行截断配方：名称/标题类文本统一为「单行显示 + 超出按容器宽度截断」。
+   完整文本由渲染层写入 title 属性作为 tooltip（check-static 断言下面这四条声明，
+   check-render 断言 tooltip 确实存在）。刻意收在同一条规则里 —— 四件套缺任何一条
+   都会退化成溢出或折行，散落在多处时最容易只改一处。 */
+.brand__title,
+.detail__title,
+.node__name,
+.svc__name,
+.editor__id {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+/* 状态色 -> 局部变量：把 data-status 放在任意元素上，其后代即可取用 --status-color。
+   不变式：除下面这组 [data-status] 规则与各自的 :not([data-status]) 兜底外，
+   任何其它规则都不得声明 --status-color（同优先级 + 更靠后会静默覆盖状态色）。 */
+[data-status="running"] {
+  --status-color: var(--status-running);
+}
+
+[data-status="stopped"] {
+  --status-color: var(--status-stopped);
+}
+
+[data-status="coming"] {
+  --status-color: var(--status-coming);
+}
+
+[data-status="developing"] {
+  --status-color: var(--status-developing);
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  /* 固定视口高度：页头/页脚自适应，主体占满剩余高度并可独立滚动（避免内容互相遮挡） */
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+/* ---------- 页头 ---------- */
+/* 页头是 sticky 的横条，滚动时下方内容会从它背后经过，所以做成一层次级表面：
+   ① 半透明（--header-veil）：让底图在页头处也透出来，与主体形成同一张背景；
+   ② backdrop-filter 把背后的内容糊掉 —— 少了它，滚过去的正文会与页头文字互相干扰，
+      半透明层反而更难读；不支持该属性的浏览器回落到更高的不透明度（下方 @supports）。
+   透明度不能随意调低：页头文字（含 secondary 文字）要与其背后的底图保持对比度，
+   check-static 里按「底图最暗/最亮」两种最坏情况算过 WCAG 对比度。 */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  border-bottom: var(--border-width) solid hsl(var(--border));
+  background-color: hsl(var(--background) / 0.92);
+}
+
+@supports (backdrop-filter: blur(10px)) or (-webkit-backdrop-filter: blur(10px)) {
+  .app-header {
+    background-color: hsl(var(--background) / var(--header-veil));
+    -webkit-backdrop-filter: blur(10px);
+    backdrop-filter: blur(10px);
+  }
+}
+
+.app-header__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-4);
+  min-height: var(--header-height);
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+
+/* 权限级别方框 */
+.perm {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: none;
+}
+
+.perm-box {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 28px;
+  padding: 0 var(--space-2);
+  border: var(--border-width) solid hsl(var(--border));
+  border-radius: var(--radius);
+  background-color: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  cursor: pointer;
+}
+
+.perm-box:hover {
+  background-color: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.perm-box__value {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.perm-box__role {
+  font-size: var(--text-xs);
+  color: hsl(var(--muted-foreground));
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.perm-box--super {
+  border-color: hsl(var(--status-running));
+}
+
+.perm-box--super .perm-box__value {
+  color: hsl(var(--status-running));
+}
+
+/* 服务密钥弹窗：遮罩 + 居中的单个输入框，无任何附加文本 */
+.modal {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: hsl(var(--background) / 0.72);
+}
+
+/* ---------- 服务 JSON 编辑器（CodeJar） ---------- */
+
+/* 同一个遮罩，面板占满可用空间：代码需要地方展开 */
+.modal--editor {
+  padding: var(--space-4);
+}
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 720px;
+  height: 100%;
+  max-height: 520px;
+  border: var(--border-width) solid hsl(var(--border));
+  border-radius: var(--radius);
+  background-color: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+}
+
+.editor__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: var(--border-width) solid hsl(var(--border));
+}
+
+.editor__title,
+.sidebar__title {
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+
+.editor__id {
+  flex: 1 1 auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.editor__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: none;
+}
+
+/* CodeJar 宿主：等宽、保留缩进与换行，内容超出时自身滚动 */
+.editor__host {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--space-3) var(--space-4);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+  white-space: pre;
+  tab-size: 2;
+  outline: none;
+}
+
+/* 校验结果行：默认显示操作提示，校验失败时改为错误文案（占位高度固定，面板不跳动） */
+.editor__status {
+  flex: none;
+  min-height: 22px;
+  padding: 0 var(--space-4) var(--space-2);
+  font-size: var(--text-xs);
+  color: hsl(var(--muted-foreground));
+}
+
+.editor__status[data-tone="error"] {
+  color: hsl(var(--status-stopped));
+}
+
+/* 语法高亮：只改颜色，不动字重与字距 —— 否则光标位置会随重绘跳动 */
+.json-key {
+  color: hsl(var(--code-key));
+}
+
+.json-string {
+  color: hsl(var(--code-string));
+}
+
+.json-number {
+  color: hsl(var(--code-number));
+}
+
+.json-literal {
+  color: hsl(var(--code-literal));
+}
+
+.json-punct {
+  color: hsl(var(--muted-foreground));
+}
+
+
+
+/* 站点标题：截断配方见文件开头的「单行截断」，这里只给排版。
+   flex: 1 1 auto 让它在空间不足时收缩被截断，而不是撑开容器或另起一行把工具栏挤走。 */
+.brand__title {
+  flex: 1 1 auto;
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.header__tools {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  margin-left: auto;
+}
+
+/* ---------- 表单控件 ---------- */
+.field {
+  display: flex;
+}
+
+.input,
+.select {
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: var(--border-width) solid hsl(var(--input));
+  border-radius: var(--radius);
+  background-color: transparent;
+  color: hsl(var(--foreground));
+}
+
+.input {
+  width: 220px;
+  max-width: 100%;
+}
+
+/* 弹窗里的单个输入框：居中、比工具栏输入框略宽略高 */
+.input--modal {
+  width: min(320px, calc(100% - var(--space-5) * 2));
+  height: 36px;
+}
+
+.input::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.select {
+  background-color: hsl(var(--background));
+}
+
+.input:focus-visible,
+.select:focus-visible {
+  border-color: hsl(var(--ring));
+  outline: none;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  height: 32px;
+  padding: 0 var(--space-3);
+  border: var(--border-width) solid hsl(var(--border));
+  border-radius: var(--radius);
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  cursor: pointer;
+}
+
+.btn:hover {
+  background-color: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.btn--icon {
+  width: 32px;
+  padding: 0;
+}
+
+
+
+/* ---------- 提示消息（右上角，单一槽位：新消息立刻顶掉上一条） ---------- */
+.toasts {
+  position: fixed;
+  top: calc(var(--header-height) + var(--space-2));
+  right: var(--space-4);
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  width: min(380px, calc(100vw - var(--space-5)));
+  pointer-events: none;
+}
+
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-2);
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: var(--border-width) solid hsl(var(--toast-color, var(--border)));
+  border-left-width: 3px;
+  border-radius: var(--radius);
+  background-color: hsl(var(--background));
+  pointer-events: auto;
+  /* 可点击关闭 */
+  cursor: pointer;
+  user-select: none;
+  /* 从右侧滑入（右 -> 左） */
+  animation: toast-in 180ms ease-out both;
+}
+
+/* 边框色调标识消息类型 */
+.toast[data-type="info"] {
+  --toast-color: var(--status-coming);
+}
+
+.toast[data-type="success"] {
+  --toast-color: var(--status-running);
+}
+
+.toast[data-type="warning"] {
+  --toast-color: var(--status-developing);
+}
+
+.toast[data-type="error"] {
+  --toast-color: var(--status-stopped);
+}
+
+/* 自动消失：滑回右侧（左 -> 右） */
+.toast--leaving {
+  animation: toast-out 160ms ease-in both;
+}
+
+.toast__icon {
+  flex: none;
+  margin-top: 2px;
+  color: hsl(var(--toast-color, var(--border)));
+}
+
+.toast__body {
+  min-width: 0;
+}
+
+.toast__topic {
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.toast__content {
+  font-size: var(--text-xs);
+  color: hsl(var(--muted-foreground));
+  overflow-wrap: anywhere;
+}
+
+@keyframes toast-in {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes toast-out {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+
+/* ---------- 主体：左目录 + 右详情 ---------- */
+.app-main {
+  display: flex;
+  /* 必须为列方向：否则 .shell 的 80% 宽度会被子项 flex-grow 覆盖（横向撑满） */
+  flex-direction: column;
+  /* 不拉伸子项宽度，让 .shell 的 80% 生效并按 auto margin 居中 */
+  align-items: center;
+  flex: 1 1 auto;
+  min-height: 0;
+  /* 上下 gap 相同；主体占满页头与页脚之间的剩余高度 */
+  padding-top: var(--space-4);
+  padding-bottom: var(--space-4);
+}
+
+.app-main__inner {
+  display: flex;
+  align-items: stretch;
+  /* 列方向上的 flex-grow：撑满高度（宽度仍由 .shell 决定） */
+  flex: 1 1 auto;
+  min-height: 0;
+  gap: var(--space-4);
+}
+
+.sidebar {
+  /* 列向 flex：头部固定高度，目录树占满剩余高度（空态才能在其中居中） */
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 var(--sidebar-width);
+  width: var(--sidebar-width);
+  min-height: 0;
+  /* 命名空间全部展开时在侧栏内部滚动，不撑破布局、不遮挡其它组件 */
+  overflow-y: auto;
+  border: var(--border-width) solid hsl(var(--border));
+  border-radius: var(--radius);
+  background-color: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+}
+
+/* 侧栏右侧的竖直对齐：头部与每个 namespace 行共用一套尺寸 ——
+   徽标与图标按钮同为 20px、间距同为 --space-1，再把右侧内边距凑成同一个 16px：
+     头部：padding-right = 16px（= .tree 的 8px + .node__row 的 padding-right 8px）
+     行内：.tree 的 8px + .node__row 的 padding-right 8px
+   于是「服务总数」与每行计数同列，「头部新增」与「行尾新增」也同列。
+   关键：这段留白必须挂在**容器**上，不能挂在写入口按钮上 ——
+   只读权限下按钮被移出布局（display: none），挂在按钮上的留白会一起消失，
+   行计数就会比头部多出 8px 的偏差。
+   改动其中之一时必须同步另一侧，否则两列会错开。 */
+.sidebar__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  /* 不参与伸缩：占剩余空间的是目录树 */
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: var(--border-width) solid hsl(var(--border));
+  background-color: hsl(var(--card));
+}
+
+/* 头部右侧：服务数 + 新建入口成组，保持与标题两端对齐 */
+.sidebar__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex: none;
+}
+
+/* 小标题样式与 .editor__title 共用一条规则（见编辑器区块，避免两处漂移） */
+
+/* 目录树：占据侧栏剩余高度，空态才有可居中的空间。
+   flex-basis 为 auto 且 min-height 保持 auto，列表变长时不会被压缩；
+   滚动仍然发生在 .sidebar 上（内容溢出即可滚动）。 */
+.tree {
+  flex: 1 1 auto;
+  padding: var(--space-2);
+}
+
+.node + .node {
+  margin-top: var(--space-1);
+}
+
+/* 行容器：展开开关占满剩余宽度，行尾留给新增入口（两者是兄弟节点，不嵌套按钮） */
+.node__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  /* 行尾留白放在容器上（而不是写入口按钮的 margin 上）：按钮在只读权限下会被
+     移出布局，留白若挂在按钮上会一同消失、把计数徽标推出对齐列。 */
+  padding-right: var(--space-2);
+}
+
+.node__head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  /* 占满剩余宽度；min-width: 0 让过长的名称能够截断。
+     右侧不留内边距：与行尾入口的分隔由 .node__row 的 gap / padding 统一给出，
+     这样徽标的右边缘才能与头部的徽标同列（对齐账见 .sidebar__head）。 */
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: var(--space-1) 0 var(--space-1) var(--space-2);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.node__head:hover {
+  background-color: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+/* 展开指示：展开态旋转 90 度（静态变换，无过渡动效） */
+.node__chevron {
+  width: 14px;
+  height: 14px;
+  color: hsl(var(--muted-foreground));
+  transform: rotate(90deg);
+}
+
+.node--collapsed .node__chevron {
+  transform: rotate(0deg);
+}
+
+.node--collapsed .node__list {
+  display: none;
+}
+
+.node__name {
+  /* 占满剩余宽度（过长才截断），把服务数推到行尾形成右对齐 */
+  flex: 1 1 auto;
+  font-size: var(--text-sm);
+  font-weight: 500;
+}
+
+.node__count {
+  flex: none;
+}
+
+.node__list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: var(--space-1);
+  margin-left: var(--space-2);
+  padding-left: var(--space-2);
+  border-left: var(--border-width) solid hsl(var(--border));
+}
+
+/* 服务项：左侧为状态色条。
+   兜底必须写成 :not([data-status])：若写成 .svc { --status-color: ... }，
+   它与 [data-status="..."] 同优先级且位置更靠后，会把状态色覆盖成中性色。 */
+.svc:not([data-status]) {
+  --status-color: var(--border);
+}
+
+.svc__btn {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-width) solid transparent;
+  border-left-width: 3px;
+  border-left-color: hsl(var(--status-color, var(--border)));
+  border-radius: var(--radius);
+  background: none;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.svc__btn:hover {
+  background-color: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.svc--active .svc__btn {
+  background-color: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.svc__name {
+  font-size: var(--text-sm);
+}
+
+/* ---------- 详情：key: value ---------- */
+.detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  /* 占满与左侧目录相同的高度，内容超出时内部滚动 */
+  overflow-y: auto;
+  padding: var(--space-4);
+  border: var(--border-width) solid hsl(var(--border));
+  border-radius: var(--radius);
+  background-color: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+}
+
+.detail__head {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+  padding-bottom: var(--space-3);
+  border-bottom: var(--border-width) solid hsl(var(--border));
+}
+
+/* 服务标题：截断配方见文件开头的「单行截断」，这里只给排版 */
+.detail__title {
+  flex: 1 1 auto;
+  font-size: var(--text-lg);
+}
+
+/* 详情头部的两个图标入口（打开服务地址 / 编辑服务）：外观完全交给 .icon-btn 基类，
+   只在此处放大到 24px —— 比侧栏的紧凑按钮略大，与详情标题的字号相称。 */
+.detail__open,
+.detail__edit {
+  width: 24px;
+  height: 24px;
+}
+
+.kv {
+  margin: 0;
+}
+
+.kv__row {
+  display: grid;
+  grid-template-columns: 160px 1fr;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: var(--border-width) dashed hsl(var(--border));
+}
+
+.kv__row:last-child {
+  border-bottom: 0;
+}
+
+.kv__key {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: hsl(var(--muted-foreground));
+  overflow-wrap: anywhere;
+}
+
+.kv__value {
+  margin: 0;
+  min-width: 0;
+  font-size: var(--text-sm);
+  overflow-wrap: anywhere;
+}
+
+.kv__value--mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.kv__value--muted {
+  color: hsl(var(--muted-foreground));
+}
+
+/* 值：object 类型 —— 代码块形式的 JSON */
+.kv__code {
+  margin: 0;
+  padding: var(--space-2);
+  border: var(--border-width) solid hsl(var(--border));
+  border-radius: var(--radius);
+  background-color: hsl(var(--muted));
+  color: hsl(var(--foreground));
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.kv__link {
+  color: hsl(var(--foreground));
+  text-decoration: underline;
+}
+
+.kv__link:hover {
+  color: hsl(var(--primary-foreground));
+  background-color: hsl(var(--primary));
+}
+
+/* 值：slice 类型 —— 每个元素一个 chunk 块 */
+.kv__chunks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.chunk {
+  padding: 0 var(--space-2);
+  border: var(--border-width) solid hsl(var(--border));
+  border-radius: var(--radius);
+  color: hsl(var(--muted-foreground));
+  font-size: var(--text-xs);
+  line-height: 18px;
+}
+
+/* ---------- 徽标 ---------- */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 var(--space-2);
+  border: var(--border-width) solid hsl(var(--border));
+  border-radius: var(--radius);
+  background-color: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  font-size: var(--text-xs);
+  line-height: 1;
+}
+
+/* 面板内的紧凑图标按钮：侧栏头部与目录行尾的新增入口（仅 super 可见）。
+   尺寸与 .badge 一致（20px），从而与计数徽标同高、同一竖直列 */
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: hsl(var(--muted-foreground));
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  border-color: hsl(var(--border));
+  background-color: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.icon-btn .icon {
+  width: 14px;
+  height: 14px;
+}
+
+/* 目录行尾的新增入口：悬停整行时才提亮（密集列表里保持低对比，需要时才引导视线）。
+   自身不留外边距 —— 行尾留白由 .node__row 给出，按钮显隐都不会移动计数列。 */
+.node__row:hover .node__add {
+  color: hsl(var(--foreground));
+}
+
+.badge--status:not([data-status]) {
+  --status-color: var(--border);
+}
+
+/* 与左侧状态色条同源：边框 + 文字 + 由状态色派生的淡填充
+   同样不能在 .badge--status 里声明 --status-color 兜底（同优先级且更靠后会覆盖状态色） */
+.badge--status {
+  border-color: hsl(var(--status-color, var(--border)));
+  background-color: hsl(var(--status-color, var(--border)) / 0.12);
+  color: hsl(var(--status-color, var(--border)));
+  font-weight: 500;
+}
+
+/* ---------- 空态 ---------- */
+.empty {
+  padding: var(--space-5);
+  border: var(--border-width) dashed hsl(var(--border));
+  border-radius: var(--radius);
+  text-align: center;
+}
+
+/* 空态居中：容器用 flex，空态自身用 auto 外边距居中。
+   刻意不用 align-items / justify-content —— 容器高度不足时那会把内容
+   挤到滚动条够不到的一侧，而 auto 外边距在空间不足时会自动归零。 */
+.detail--empty,
+.tree--empty {
+  display: flex;
+}
+
+.detail--empty > .empty,
+.tree--empty > .empty {
+  margin: auto;
+}
+
+.empty__title {
+  font-weight: 500;
+}
+
+.empty__hint {
+  font-size: var(--text-xs);
+  color: hsl(var(--muted-foreground));
+}
+
+/* ---------- 页脚 ---------- */
+.app-footer {
+  border-top: var(--border-width) solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+  font-size: var(--text-xs);
+}
+
+.app-footer__inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-5);
+  padding-top: var(--space-2);
+  padding-bottom: var(--space-2);
+}
+
+.stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+
+.stat--time {
+  margin-left: auto;
+}
+
+.stat__label {
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.stat__value {
+  font-family: var(--font-mono);
+  color: hsl(var(--foreground));
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width: 900px) {
+  /* 窄屏改为常规文档流（允许整页滚动），不再固定视口高度 */
+  .app {
+    height: auto;
+    /* 纵向可滚动；横向保持隐藏，避免滑入中的提示消息产生横向滚动条 */
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .app-main {
+    display: block;
+  }
+
+  .app-main__inner {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    flex: none;
+    width: 100%;
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  .detail {
+    overflow-y: visible;
+  }
+
+  .header__tools {
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .field {
+    flex: 1;
+  }
+
+  .input {
+    width: 100%;
+  }
+}
