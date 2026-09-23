@@ -61,6 +61,12 @@
             <svg class="icon"><use href="./icons/sprite.svg#refresh-cw" /></svg>
             <span class="sr-only">刷新</span>
           </button>
+
+          <!-- 说明入口：点击弹出 data/intro/*.md 渲染出来的说明（弹窗见下方 intro-modal） -->
+          <button id="intro-btn" class="btn btn--icon" type="button" title="说明">
+            <svg class="icon"><use href="./icons/sprite.svg#book-open" /></svg>
+            <span class="sr-only">说明</span>
+          </button>
         </div>
       </div>
     </header>
@@ -215,6 +221,28 @@
           aria-labelledby="editor-title editor-id"
         ></div>
         <p class="editor__status" id="editor-status" role="status"></p>
+      </div>
+    </div>
+
+    <!--
+      说明弹窗：文档来自 storage.introPath（默认 data/intro）。
+      目录形态 → 左侧 sidebar 列出文档、右侧渲染内容；单文件形态 → 只渲染内容。
+      Markdown 由 vendored 的 marked 渲染（src/web/vendor/marked.js），
+      渲染结果经清洗后以 DOM 节点插入（项目禁用 innerHTML）。
+      Esc 或点击遮罩关闭。
+    -->
+    <div id="intro-modal" class="modal modal--intro" hidden>
+      <div class="intro">
+        <div class="intro__head">
+          <span class="intro__title">INTRODUCTION</span>
+          <button id="intro-close" class="icon-btn" type="button" title="关闭" aria-label="关闭">
+            <svg class="icon" aria-hidden="true"><use href="./icons/sprite.svg#x" /></svg>
+          </button>
+        </div>
+        <div class="intro__body">
+          <nav id="intro-nav" class="intro__nav" aria-label="说明文档目录" hidden></nav>
+          <div id="intro-content" class="intro__content"></div>
+        </div>
       </div>
     </div>
 

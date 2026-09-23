@@ -14,10 +14,11 @@
     "test": "node tests/run.mjs",
     "test:update": "node tests/check-render.mjs --update",
     "icons": "node scripts/build-icons.mjs",
-    "vendor": "node scripts/vendor-codejar.mjs"
+    "vendor": "node scripts/vendor-codejar.mjs && node scripts/vendor-marked.mjs"
   },
   "devDependencies": {
     "codejar": "^4.3.0",
-    "lucide-static": "^1.47.0"
+    "lucide-static": "^1.47.0",
+    "marked": "^18.0.14"
   }
 }

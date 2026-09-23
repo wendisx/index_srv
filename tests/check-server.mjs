@@ -125,6 +125,39 @@ function seedBrokenSchema(dataDir) {
   fs.writeFileSync(path.join(dataDir, SERVICE_SCHEMA_REL), '{ 这不是合法 JSON');
 }
 
+/** 播种：说明文档是一个目录（data/intro 下的 md） */
+function seedIntroDir(dataDir) {
+  seedSections(dataDir);
+  const source = path.join(ROOT, 'data', 'intro');
+  const target = path.join(dataDir, 'intro');
+  fs.mkdirSync(target, { recursive: true });
+  for (const file of fs.readdirSync(source)) {
+    fs.copyFileSync(path.join(source, file), path.join(target, file));
+  }
+  // 额外播种一篇 hidden 文档：侧栏必须把它过滤掉，但单篇接口仍可访问
+  fs.writeFileSync(
+    path.join(target, '99-archived.md'),
+    ['---', "label: '已归档的旧文档'", 'order: 9', 'hidden: true', '---', '', '# 已归档', '', '这篇不应出现在侧栏。', ''].join('\n'),
+  );
+  // 再播种一篇没有 frontmatter 的旧式文档：必须按缺省处理（排最后、展示名回落文件名）
+  fs.writeFileSync(path.join(target, 'legacy.md'), '# 旧式文档\n\n没有 frontmatter 也能读。\n');
+}
+
+/**
+ * 播种：说明路径指向单个 .md 文件（而不是目录）。
+ * 文件名带 .md 后缀是刻意的：服务端只认 markdown 文件作说明，
+ * 这样配置误指向 settings.json 之类时不会被当成文档发出去。
+ */
+const INTRO_FILE = 'single.md';
+
+function seedIntroFile(dataDir) {
+  seedSections(dataDir);
+  fs.writeFileSync(
+    path.join(dataDir, INTRO_FILE),
+    ['---', "label: '单文件说明'", 'order: 1', 'hidden: false', '---', '', '# 单文件说明', '', '只有一篇，前端不应渲染目录栏。', ''].join('\n'),
+  );
+}
+
 /** 旧版播种：只放单文件 conf/sites.json（把三份分区合并回 v2 形态），用于验证启动迁移 */
 function seedLegacy(dataDir) {
   const legacy = {
@@ -695,18 +728,97 @@ async function checkServiceSchema() {
   );
 }
 
+/* ---------------- 模式五：说明文档接口（列表 + 单篇 + 穿越防护） ---------------- */
+
+async function checkIntro() {
+  /* 目录形态：列出多篇，单篇返回 Markdown 原文 */
+  await withServer(
+    {},
+    async ({ base, port }) => {
+      const index = await (await fetch(`${base}/api/intro`)).json();
+      if (index.data?.mode !== 'dir') bad.push(`说明接口形态应为 dir，实际 ${index.data?.mode}`);
+
+      const items = index.data?.items ?? [];
+      if (items.length === 0) bad.push('说明接口未列出任何文档');
+      else {
+        const first = await (await fetch(`${base}/api/intro/${items[0].id}`)).json();
+        if (!String(first.data?.content ?? '').startsWith('# ')) {
+          bad.push('说明单篇未返回 Markdown 原文');
+        }
+      }
+      // 展示名来自 frontmatter 的 label（不再是正文第一个 # 标题），否则会显示 01-overview 这种
+      if (items.some((item) => /^\d+[-_.]/.test(item.name ?? ''))) {
+        bad.push('说明展示名未取 frontmatter 的 label：列表里出现了带序号前缀的文件名');
+      }
+      // 顺序由 order 升序决定、hidden 的不进侧栏；没有 frontmatter 的按缺省处理（排最后、回落文件名）
+      // 预期清单：仓库五篇（order 1–5）+ 播种的 legacy.md（无 frontmatter，排最后）；99-archived.md（hidden）不出现
+      if (items.map((item) => item.id).join() !== '01-overview.md,02-usage.md,03-deploy.md,04-config.md,05-disclaimer.md,legacy.md') {
+        bad.push(`说明列表应按 frontmatter 的 order 升序且过滤 hidden，实际 ${items.map((item) => item.id).join()}`);
+      }
+      if (items.at(-1)?.name !== 'legacy') {
+        bad.push(`无 frontmatter 的文档应回落为文件名展示名并排在最后，实际 ${items.at(-1)?.name}`);
+      }
+      if (items[0]?.name !== '项目概览') {
+        bad.push(`说明展示名应来自 frontmatter 的 label，实际 ${items[0]?.name}`);
+      }
+      // hidden 只影响侧栏：单篇接口仍可访问，且返回的是剥掉 frontmatter 的正文
+      const archived = await (await fetch(`${base}/api/intro/99-archived.md`)).json();
+      if (archived.data?.name !== '已归档的旧文档' || !String(archived.data?.content ?? '').startsWith('# 已归档')) {
+        bad.push('hidden 文档应仍可通过单篇接口访问（返回剥掉 frontmatter 的正文与 label 展示名）');
+      }
+
+      /* 穿越：既不能成功，也不能把 data/conf/settings.json 的内容带出来。
+         断言的是「读不到站外文件」这一性质，而不是某个具体状态码。 */
+      // 与静态穿越同一套做法：必须用 rawGet，fetch 会按 URL 规范把 ../ 归一化掉，
+      // 那样请求根本到不了服务端，测试就成了摆设
+      for (const rawPath of [
+        '/api/intro/../conf/settings.json',
+        '/api/intro/..%2fconf%2fsettings.json',
+        '/api/intro/%2e%2e%2fconf%2fsettings.json',
+        '/api/intro/../section/service.json',
+      ]) {
+        const { status, body } = await rawGet(port, rawPath);
+        if (status === 200) bad.push(`说明接口穿越未被拦下：${rawPath} 返回 ${status}`);
+        if (body.includes('Index Services') || body.includes('"services"')) {
+          bad.push(`说明接口泄漏了目录之外的文件内容：${rawPath}`);
+        }
+      }
+    },
+    { seed: seedIntroDir },
+  );
+
+  /* 单文件形态：只有一篇（用 INDEX_SRV_INTRO 把路径指向单个 .md） */
+  await withServer(
+    { INDEX_SRV_INTRO: INTRO_FILE },
+    async ({ base }) => {
+      const index = await (await fetch(`${base}/api/intro`)).json();
+      if (index.data?.mode !== 'file') bad.push(`单文件说明形态应为 file，实际 ${index.data?.mode}`);
+      const items = index.data?.items ?? [];
+      if (items.length !== 1) bad.push(`单文件说明应只列出一篇，实际 ${items.length}`);
+      else {
+        const doc = await (await fetch(`${base}/api/intro/${items[0].id}`)).json();
+        if (!String(doc.data?.content ?? '').includes('单文件说明')) bad.push('单文件说明内容不正确');
+        if (doc.data?.name !== '单文件说明') bad.push('单文件说明的展示名应来自 frontmatter 的 label');
+        if (/^\s*---/.test(String(doc.data?.content ?? ''))) bad.push('单篇内容不应包含 frontmatter');
+      }
+    },
+    { seed: seedIntroFile },
+  );
+}
+
 async function main() {
   await checkReadOnlyMode();
   await checkSecretMode();
   await checkLegacyMigration();
   await checkServiceSchema();
+  await checkIntro();
 
   if (bad.length) {
     console.error(`✘ ${bad.length} 项问题:\n - ${bad.join('\n - ')}`);
     process.exit(1);
   }
   console.log(
-    '✔ 端到端冒烟通过（页面 + 全部静态资源 + 只读模式 + 密钥鉴权 + 数据往返 + 分区写回 + 旧文件迁移 + 草稿骨架可配置 + 新建命名空间 + 编辑服务 + 自定义字段 + 无删除接口 + 穿越防护 + 协商缓存）',
+    '✔ 端到端冒烟通过（页面 + 全部静态资源 + 只读模式 + 密钥鉴权 + 数据往返 + 分区写回 + 旧文件迁移 + 草稿骨架可配置 + 说明文档两种形态 + 新建命名空间 + 编辑服务 + 自定义字段 + 无删除接口 + 穿越防护 + 协商缓存）',
   );
 }
 

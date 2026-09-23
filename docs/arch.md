@@ -15,6 +15,8 @@
 
 数据按语义拆成三份 JSON：配置类放 `data/conf/settings.json`，数据源放 `data/section/namespace.json` 与 `data/section/service.json`。启动时读入内存并建立 id 索引，写操作串行化、原子落盘，且只回写内容确实变化的那一份；日志按天切分写入 `data/log/`。另有一份不属于数据分区的配置类文件 `data/conf/service.schema.json`（新建服务的草稿骨架），同样在启动时读入，供编辑器生成新建草稿。
 
+说明文档（`data/intro`，由 `storage.introPath` 配置）是**只读的 Markdown**：接口发剥掉 frontmatter 后的原文，渲染在浏览器端用 vendored 的 marked 完成，因此服务端不需要任何 YAML/HTML 解析依赖（frontmatter 只逐行读 `label` / `order` / `hidden` 三个字段）；配置指向目录时列出多篇（弹窗带目录栏，侧栏的名称/顺序/显隐由 frontmatter 在服务端定稿），指向单个 `.md` 时只有一篇（弹窗只有内容区）。
+
 关键约束（贯穿全部设计）：
 
 1. **运行期零依赖**：后端只用 Node 内置模块，前端只用浏览器原生能力 —— 唯一的例外是 `src/web/vendor/` 下 vendored 的第三方源码（当前只有 CodeJar），它以源码形式随仓库提交，仍是浏览器原生 ES Module。开发期的 2 个 devDependency（`lucide-static` 生成图标精灵、`codejar` 供 vendoring）都只产出提交进仓库的文件，运行与容器构建都不需要 `npm install`。
@@ -73,6 +75,7 @@ index_srv/
 │           ├── render.js     # 渲染层：数据 -> 左侧目录树（namespace / service）
 │           ├── detail.js     # 渲染层：选中服务 -> 右侧 key: value 详情（值渲染管道）
 │           ├── editor.js     # 服务 JSON 编辑器：挂载 CodeJar + 最小 JSON 高亮 + 草稿校验
+│           ├── intro.js      # 说明弹窗的渲染：marked 解析 + 清洗（不使用 innerHTML）
 │           ├── alert.js      # 提示消息：右上角浮层，自动关闭 + 点击关闭
 │           └── app.js        # 应用入口：装配数据、事件、权限与渲染
 ├── data/                     # 运行期数据（容器挂载到宿主机的本地文件系统）
@@ -81,6 +84,7 @@ index_srv/
 │   ├── section/              # 数据源：一份文件一个语义分区，可独立编辑
 │   │   ├── namespace.json    #   命名空间
 │   │   └── service.json      #   服务（含状态与自由属性）
+│   ├── intro/                # 说明文档：Markdown，页头"说明"入口读取（目录或单个文件均可）
 │   ├── log/                  # 日志：app-YYYY-MM-DD.log / access-YYYY-MM-DD.log（JSON Lines）
 ├── docs/
 │   ├── arch.md               # 本文：架构与交互细节
@@ -501,7 +505,7 @@ flowchart LR
 - **目录树**：namespace 一级、service 二级；折叠通过 `.node--collapsed` 直接改类（不重渲染，保留侧栏滚动位置），箭头用静态 `transform: rotate(90deg)` 表示展开。
 - **状态色**：`data-status` 把状态色写入局部变量 `--status-color`，同一份规则同时驱动服务项左侧色条与详情状态徽标。
 - **名称截断**：服务名与命名空间名 `ellipsis` 截断，全名走 `title` tooltip，状态文案写入 `aria-label`（不只用颜色传达信息）。
-- **标题单行截断**：站点标题与服务标题统一「`nowrap` + `overflow: hidden` + `ellipsis` + `min-width: 0`」，长标题按容器宽度截断、完整值走 `title` 属性（`check-static` 断言这四条声明、`check-render` 断言详情标题带 tooltip）。
+- **标题单行截断**：站点标题、服务标题与说明侧栏条目统一「`nowrap` + `overflow: hidden` + `ellipsis` + `min-width: 0`」，长标题按容器宽度截断、完整值走 `title` 属性（`check-static` 断言这四条声明并钉住 `intro.js` 的 `title` 写入、`check-render` 断言详情标题带 tooltip）。
 - **命名空间兜底**：服务指向不存在的命名空间时归入「未分组」条目展示，保证不丢内容。
 - **详情 key: value**：`appendRow()` 只搭行骨架（key 文本 + 值插槽），值由 `RENDER_RULES` 规则表按「key → 空值 → object → slice → 基本类型」的顺序分派，渲染函数签名统一为 `(node, value, context)`：`status` → 色调块、`url` → 链接、`object` → JSON 代码块、`slice` → 多个 chunk 块、其余 → 常规文本（数字与布尔等宽）。字段顺序为内置字段（`namespace` / `status` / `url` / `description` / `tags`）+ 自定义 `attributes` + `id`；`tags` 本身是数组，天然走 slice 规则。
 - **空态**：无匹配结果时渲染 `tpl-empty`（文案为英文，区分「无数据」与「搜索无结果」）。`renderDetail` / `renderTree` 分别在空态给容器加 `.detail--empty` / `.tree--empty`，由 CSS 用 `margin: auto` 让整块在容器内居中，恢复内容后移除该类。侧栏之所以有可居中的空间，是因为 `.sidebar` 是列向 flex、`.tree` 占满剩余高度；`.tree` 不自设高度也不接管滚动，长列表仍在侧栏滚动。居中刻意不用 `align-items` / `justify-content` —— 容器高度不足时那会把内容挤到滚动条够不到的一侧。

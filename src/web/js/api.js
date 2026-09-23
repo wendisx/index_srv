@@ -71,6 +71,10 @@ export const api = {
   listSites: (query = '') => request(`/sites${query}`),
   listNamespaces: () => request('/namespaces'),
 
+  /* 说明文档：目录形态返回列表，单篇返回 Markdown 原文（渲染在前端做） */
+  introIndex: () => request('/intro'),
+  introDoc: (id) => request(`/intro/${encodeURIComponent(id)}`),
+
   /* 权限提升：提交密钥摘要（见 digest.js 的 sha256Hex），是否保存由调用方决定 */
   elevate: (digestValue) => post('/permission', { digest: digestValue }),
 

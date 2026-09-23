@@ -97,7 +97,8 @@ const cssAll = ['theme.css', 'base.css', 'components.css']
   .join('\n');
 
 const TOKEN_PREFIX = /^--(background|foreground|card|muted|accent|border|input|ring|primary|status|toast|page|code|radius|font|text|space|shell|sidebar|header)/;
-// 这些写法出现在文档里但不是 CSS 类：BEM 命名法示例、文件名、IDL 属性名
+// 这些写法出现在文档里但不是 CSS 类：BEM 命名法示例、文件扩展名、IDL 属性名
+// （扩展名必须豁免：说明文档里大量出现「`.md` 结尾」这类说法，它不是类名）
 const BEM_PLACEHOLDER = new Set([
   'block',
   'block__element',
@@ -105,6 +106,17 @@ const BEM_PLACEHOLDER = new Set([
   'block--modifier',
   'env',
   'hidden',
+  'md',
+  'json',
+  'log',
+  'yml',
+  'yaml',
+  'js',
+  'mjs',
+  'svg',
+  'html',
+  'css',
+  'bak',
 ]);
 const proseOf = (rel) => stripFences(read(rel));
 
@@ -137,6 +149,7 @@ const IDENTIFIERS = [
   'renderPermission', 'permissionFlags',
   'combineSections', 'createIndex', 'countInIndex', 'normalizeSettings', 'snapshot',
   'createDraft', 'createJsonEditor', 'validateDraft', 'formatDraft', 'isSiteField', 'SITE_FIELDS',
+  'renderIntro', 'renderIntroNav', 'normalizeServiceSchema', 'DEFAULT_SERVICE_SCHEMA',
 ];
 // 已移除的写法：文档里若再次出现，说明文档腐化
 const RETIRED = [

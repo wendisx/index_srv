@@ -8,6 +8,7 @@ import { isDigestSupported, sha256Hex } from './digest.js';
 import { dismissAlert, showAlert } from './alert.js';
 import { renderTree } from './render.js';
 import { renderDetail } from './detail.js';
+import { renderIntro, renderIntroNav } from './intro.js';
 import { createDraft, createJsonEditor, formatDraft, validateDraft } from './editor.js';
 import { ACCENTS, ACCENT_LABELS, MODE_LABELS, createThemeManager } from './theme.js';
 
@@ -60,6 +61,11 @@ const DOM_SELECTORS = {
   themeButton: '#theme-btn',
   themeLabel: '#theme-label',
   refreshButton: '#refresh-btn',
+  introButton: '#intro-btn',
+  introModal: '#intro-modal',
+  introNav: '#intro-nav',
+  introContent: '#intro-content',
+  introClose: '#intro-close',
   tree: '#tree',
   treeCount: '#tree-count',
   detail: '#detail',
@@ -517,6 +523,61 @@ function onDetailClick(event) {
   if (target?.closest('.detail__edit')) openServiceEditor();
 }
 
+/* ---------------- 说明弹窗 ---------------- */
+
+/** 说明文档的形态：dir（目录，带 sidebar）/ file（单文件）/ none（不显示入口） */
+let introMode = 'none';
+/** 文档列表（目录形态下可能有多篇） */
+let introItems = [];
+/** 当前选中的文档 id */
+let introId = '';
+
+/**
+ * 打开说明弹窗：先载入文档清单，再渲染第一篇。
+ * 形态由服务端决定 —— 目录 → 左侧 sidebar + 右侧内容；单文件 → 只有内容。
+ */
+async function openIntro() {
+  toggleHidden(dom.introModal, false);
+  try {
+    const index = await api.introIndex();
+    introMode = index?.mode ?? 'none';
+    introItems = index?.items ?? [];
+
+    // 没有文档可用时收起入口：不留一个点了没反应的按钮
+    if (introMode === 'none' || introItems.length === 0) {
+      closeIntro();
+      toggleHidden(dom.introButton, true);
+      return;
+    }
+
+    // 只有目录形态才显示 sidebar（单文件形态按约定只给内容区）
+    toggleHidden(dom.introNav, introMode !== 'dir');
+    if (introMode === 'dir') {
+      renderIntroNav(dom.introNav, introItems, introId || introItems[0].id, selectIntroDoc);
+    }
+    await selectIntroDoc(introId || introItems[0].id);
+  } catch (error) {
+    closeIntro();
+    showAlert({ type: 'error', topic: '说明加载失败', content: error.message });
+  }
+}
+
+/** 选中并渲染某一篇说明 */
+async function selectIntroDoc(id) {
+  introId = id;
+  if (introMode === 'dir') renderIntroNav(dom.introNav, introItems, id, selectIntroDoc);
+  try {
+    const doc = await api.introDoc(id);
+    renderIntro(dom.introContent, doc?.content ?? '');
+  } catch (error) {
+    showAlert({ type: 'error', topic: '说明加载失败', content: error.message });
+  }
+}
+
+function closeIntro() {
+  toggleHidden(dom.introModal, true);
+}
+
 function bindEvents() {
   dom.search.addEventListener(
     'input',
@@ -542,6 +603,10 @@ function bindEvents() {
       }
       if (!isHidden(dom.permModal)) {
         closeModal();
+        return;
+      }
+      if (!isHidden(dom.introModal)) {
+        closeIntro();
         return;
       }
       if (dom.search.value) {
@@ -590,6 +655,13 @@ function bindEvents() {
   dom.editorReset.addEventListener('click', () => resetServiceEditor());
   dom.editorModal.addEventListener('click', (event) => {
     if (event.target === dom.editorModal) closeServiceEditor();
+  });
+
+  // 说明：入口在页头，关闭方式与其它弹窗一致（关闭按钮 / 点击遮罩 / Esc）
+  dom.introButton.addEventListener('click', () => openIntro());
+  dom.introClose.addEventListener('click', () => closeIntro());
+  dom.introModal.addEventListener('click', (event) => {
+    if (event.target === dom.introModal) closeIntro();
   });
 }
 

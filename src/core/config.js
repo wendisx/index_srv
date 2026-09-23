@@ -128,6 +128,11 @@ export function loadConfig() {
         : null,
       // 新建服务的草稿骨架（配置类文件，只在启动时读一次，见 readServiceSchema）
       serviceSchemaFile,
+      // 说明文档（data/intro 下的 Markdown）：既可以是目录也可以是单文件，
+      // 形态在启动时探测一次（见 introMode），前端据此决定弹窗是否带 sidebar
+      // 说明文档：目录（多篇）或单个 .md（一篇）；单文件必须是 .md，
+      // 免得配置误指向 settings.json 之类时被当成文档发出去
+      introPath: path.resolve(dataDir, env('INDEX_SRV_INTRO') ?? base.storage.introPath ?? 'intro'),
     },
     // 草稿骨架本体与来源：source 取 file / default / invalid，由 /api/config 与启动日志透出
     serviceSchema: service.schema,

@@ -39,6 +39,7 @@ src/web/
 └── js/
     ├── theme-init.js     # <head> 同步脚本：首屏预设主题，避免闪烁
     ├── dom.js            # 最底层 DOM 工具：查询、填充、显隐、防抖
+    ├── intro.js          # 说明弹窗：Markdown → DOM（vendored 的 marked + 清洗，不用 innerHTML）
     ├── view.js           # 视图基元：模板取节点、空态、状态文案（供多个渲染模块复用）
     ├── api.js            # /api 客户端：响应体解包、错误抛出、密钥摘要读写
     ├── digest.js         # 密钥摘要：Web Crypto 的 SHA-256（与服务端同算法）
@@ -206,6 +207,7 @@ CSS 变量命名沿用 shadcn/ui 约定，颜色值为 **HSL 分量**（不含 `
 | `render.js` | 左侧目录树：namespace → service | `renderTree`（返回可见服务数） |
 | `detail.js` | 右侧详情：行骨架 + 值渲染管道（按 key 与值类型选择组件） | `renderDetail` |
 | `editor.js` | 服务 JSON 编辑器：挂载 CodeJar、最小 JSON 高亮、草稿骨架与校验（不碰网络） | `createJsonEditor` `createDraft` `formatDraft` `validateDraft` |
+| `intro.js` | 说明弹窗的渲染：marked 解析 + 清洗后插入 DOM（取数据由 `app.js` 走 `api.js`） | `renderIntro` `renderIntroNav` |
 | `app.js` | 装配：加载数据、绑定事件、权限、驱动渲染 | 无（自执行 `boot()`） |
 
 依赖方向严格单向，共四层：
@@ -245,8 +247,8 @@ boot()
 - **目录树**：`namespace` 一级、`service` 二级；折叠通过 `.node--collapsed` 类切换（直接改类、不重渲染，保留滚动位置），箭头用**静态** `transform: rotate(90deg)` 表示展开。
 - **目录行结构**：`.node__row` 是弹性行 = `.node__head`（展开开关，占满剩余宽度）+ `.node__add`（行尾的新增入口）。两者是**兄弟节点**，没有把按钮嵌进按钮。
 - **名称截断**：服务名与命名空间名均 `text-overflow: ellipsis`，全名通过 `title` 属性作为 tooltip；状态信息额外写入 `aria-label` 供读屏使用。
-- **标题单行截断**：站点标题（`.brand__title`）与服务标题（`.detail__title`）统一为 `white-space: nowrap` + `overflow: hidden` + `text-overflow: ellipsis` + `min-width: 0`（最后一项让元素能被压缩到容器宽度以内，否则长标题会撑破布局），完整文本由渲染层写入 `title` 属性。`data/section/service.json` 里的 `s-code-server` 就是这条规则的验证样例（名称刻意写得很长）。
-  - 检查：`check-static` 断言这两个选择器必须同时具备上述四条声明；`check-render` 断言详情标题必须带 `title` 属性（截断后要看全名）。
+- **标题单行截断**：站点标题（`.brand__title`）、服务标题（`.detail__title`）与说明侧栏条目（`.intro__item`）统一为 `white-space: nowrap` + `overflow: hidden` + `text-overflow: ellipsis` + `min-width: 0`（最后一项让元素能被压缩到容器宽度以内，否则长标题会撑破布局 —— 对 `.intro__item` 还意味着从 200px 侧栏横向溢出），完整文本由渲染层写入 `title` 属性。`data/section/service.json` 里的 `s-code-server` 就是这条规则的验证样例（名称刻意写得很长）；说明侧栏的条目名来自每篇文档 frontmatter 的 `label`（同样可能很长，服务端按 `order` 升序、过滤 `hidden` 后下发）。
+  - 检查：`check-static` 断言这三个选择器必须同时具备上述四条声明（并钉住 `intro.js` 必须写入条目 `title`）；`check-render` 断言详情标题必须带 `title` 属性（截断后要看全名）。
 - **未归属兜底**：服务的 `namespaceId` 找不到对应命名空间时，归入「未分组」条目渲染，不会静默丢失；该分组不是真实命名空间，因此**永远不出新增入口**。
 - **空命名空间**：普通只读视图会跳过没有可见服务的命名空间（保持目录整洁）；**super 视图会保留它们** —— 否则新建的命名空间会立刻「消失」，无从往里添加服务（见 `tree::empty-namespace-*` 场景）。
 - **详情行骨架**：`appendRow(list, key, value, context)` 只负责「key 纯文本 + 值插槽」，**值怎么显示**交给值渲染管道。

@@ -207,7 +207,20 @@ const LAYERS = {
   'alert.js': ['dom.js', 'view.js'],
   // 编辑器只需要第三方源码（CodeJar），不依赖本项目其它模块
   'editor.js': ['../vendor/codejar.js'],
-  'app.js': ['dom.js', 'view.js', 'render.js', 'detail.js', 'alert.js', 'editor.js', 'theme.js', 'api.js', 'digest.js'],
+  // 说明渲染只需要 marked（列表与内容的取回由 app.js 用 api.js 完成）
+  'intro.js': ['../vendor/marked.js'],
+  'app.js': [
+    'dom.js',
+    'view.js',
+    'render.js',
+    'detail.js',
+    'intro.js',
+    'alert.js',
+    'editor.js',
+    'theme.js',
+    'api.js',
+    'digest.js',
+  ],
 };
 const exportsOf = {};
 const importsOf = {};
@@ -242,7 +255,13 @@ for (const file of fs.existsSync(vendorDir) ? fs.readdirSync(vendorDir).filter((
   const code = fs.readFileSync(path.join(vendorDir, file), 'utf8');
   vendored.set(
     `../vendor/${file}`,
-    new Set([...code.matchAll(/export\s+(?:async\s+)?(?:function|const|let|var)\s+([\w$]+)/g)].map((m) => m[1])),
+    new Set([
+      ...[...code.matchAll(/export\s+(?:async\s+)?(?:function|const|let|var)\s+([\w$]+)/g)].map((m) => m[1]),
+      // 压缩后的产物常用 export{a as b,...} 这种列表形式（marked 就是）：取 as 之后的导出名
+      ...[...code.matchAll(/export\s*\{([^}]+)\}/g)].flatMap((m) =>
+        m[1].split(',').map((part) => part.trim().split(/\s+as\s+/).pop().trim()),
+      ),
+    ]),
   );
 }
 for (const [file, code] of Object.entries(src)) {
@@ -367,12 +386,13 @@ if (declaration('.sidebar__actions', 'gap') !== declaration('.node__row', 'gap')
 }
 
 /* ---------------- 11. 标题单行截断 ---------------- */
-// 站点标题与服务标题都必须「单行 + 省略号 + 可收缩」：
+// 站点标题、服务标题与说明侧栏条目都必须「单行 + 省略号 + 可收缩」：
 // 少了 min-width: 0 元素不会收缩（撑破布局），缺 overflow/ellipsis 则会溢出而不是截断。
 // 完整文本由 title 属性作为 tooltip 呈现（由渲染层写入，见 check-render 的断言）。
 for (const [selector, label] of [
   ['.brand__title', '站点标题'],
   ['.detail__title', '服务标题'],
+  ['.intro__item', '说明侧栏条目'],
 ]) {
   const rule = ruleFor(selector);
   if (!rule) {
@@ -390,6 +410,11 @@ for (const [selector, label] of [
   if (/overflow-wrap|word-break/.test(rule.body)) {
     bad.push(`${label} ${selector} 声明了 overflow-wrap / word-break：应当单行截断而不是折行`);
   }
+}
+// 说明侧栏的条目是运行时按 /api/intro 渲染的，快照覆盖不到：
+// 截断生效的前提是渲染层把完整名称写进 title，这里钉住这条写入。
+if (!/button\.title\s*=\s*label/.test(src['intro.js'])) {
+  bad.push('intro.js 未把完整条目名称写入 title（侧栏条目截断后无法查看全名）');
 }
 
 /* ---------------- 12. 编辑器操作区：图标按钮必须有无障碍名 ---------------- */
@@ -609,6 +634,27 @@ if (fileKeys.join() !== serverKeys.join()) {
   bad.push(`data/conf/service.schema.json 的字段与服务端兜底骨架不一致：${fileKeys.join(',')} vs ${serverKeys.join(',')}`);
 } else if (JSON.stringify(schemaFileData) !== JSON.stringify(DEFAULT_SERVICE_SCHEMA)) {
   bad.push('data/conf/service.schema.json 的取值与服务端兜底骨架不同（两者应完全相同）');
+}
+
+/* ---------------- 17. 说明侧栏：由 frontmatter 的三个字段控制 ---------------- */
+// 侧栏的名称/顺序/显隐全部来自每个 .md 开头的 frontmatter（label / order / hidden），
+// 正文不再参与。这里钉住服务端的三条关键行为：过滤 hidden、按 order 升序、
+// 单篇内容剥离 frontmatter（控制字段不应混进正文发给 marked）。
+const introApi = stripJs(fs.readFileSync(path.join(ROOT, 'src', 'api', 'intro.js'), 'utf8'));
+if (!/function parseFrontmatter/.test(introApi) || !/function metaOf/.test(introApi)) {
+  bad.push('src/api/intro.js 缺少 frontmatter 解析（侧栏无从拿到 label / order / hidden）');
+}
+for (const [pattern, message] of [
+  [/\.filter\(\(item\) => !item\.hidden\)/, '列表未过滤 hidden 文档（hidden 应只影响侧栏显隐）'],
+  [/\.sort\(\(a, b\) => a\.order - b\.order/, '列表未按 frontmatter 的 order 升序排序'],
+  [/content: body\b/, '单篇接口未剥离 frontmatter（控制字段不应混进正文）'],
+  [/label \|\| fallback/, '列表展示名缺 label 时应回落到文件名'],
+  [/label \|\| displayName\(id\)/, '单篇展示名缺 label 时应回落到文件名'],
+]) {
+  if (!pattern.test(introApi)) bad.push(`src/api/intro.js：${message}`);
+}
+if (/titleOf/.test(introApi)) {
+  bad.push('src/api/intro.js 仍引用 titleOf：侧栏名称已改由 frontmatter 的 label 提供');
 }
 
 /* ---------------- 输出 ---------------- */

@@ -145,6 +145,11 @@
   padding: var(--space-4);
 }
 
+/* 说明弹窗：文档要在里面读，给到接近面板的宽度 */
+.modal--intro {
+  padding: var(--space-4);
+}
+
 .editor {
   display: flex;
   flex-direction: column;
@@ -213,6 +218,215 @@
 
 .editor__status[data-tone="error"] {
   color: hsl(var(--status-stopped));
+}
+
+/* ---------- 说明弹窗（Markdown 文档） ---------- */
+
+.intro {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: 880px;
+  height: 100%;
+  max-height: 560px;
+  border: var(--border-width) solid hsl(var(--border));
+  background-color: hsl(var(--card));
+  color: hsl(var(--card-foreground));
+}
+
+.intro__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  flex: none;
+  padding: var(--space-2) var(--space-4);
+  border-bottom: var(--border-width) solid hsl(var(--border));
+}
+
+.intro__title {
+  font-size: var(--text-xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: hsl(var(--muted-foreground));
+}
+
+.intro__body {
+  display: flex;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 目录形态才有这一栏：单文件形态由 JS 收起，只留内容 */
+.intro__nav {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  flex: none;
+  width: 200px;
+  overflow-y: auto;
+  padding: var(--space-2);
+  border-right: var(--border-width) solid hsl(var(--border));
+}
+
+.intro__item {
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-width) solid transparent;
+  border-radius: var(--radius);
+  background: none;
+  color: hsl(var(--muted-foreground));
+  font-size: var(--text-sm);
+  text-align: left;
+  cursor: pointer;
+  /* 条目标题始终单行：过长按侧栏宽度截断，完整名称由渲染层写入 title 属性。
+     min-width: 0 在这里是必需项 —— .intro__nav 是纵向 flex，flex 项默认
+     min-width: auto，单行文本会把按钮撑到内容宽度、从 200px 的侧栏里横向溢出。 */
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.intro__item:hover {
+  background-color: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.intro__item--active {
+  background-color: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.intro__content {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-y: auto;
+  padding: var(--space-4);
+  line-height: 1.7;
+}
+
+/* Markdown 排版：渲染结果被标上 md-* 扁平类，因此这里不必写嵌套选择器 */
+.intro__content h1 {
+  margin: 0 0 var(--space-3);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.intro__content h2 {
+  margin: var(--space-5) 0 var(--space-2);
+  font-size: var(--text-lg);
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.intro__content h3 {
+  margin: var(--space-4) 0 var(--space-2);
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+.intro__content h4 {
+  margin: var(--space-3) 0 var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+.intro__content p {
+  margin: 0 0 var(--space-3);
+}
+
+.intro__content ul {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+  list-style: disc;
+}
+
+.intro__content ol {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-5);
+  list-style: decimal;
+}
+
+.intro__content li {
+  margin-bottom: var(--space-1);
+}
+
+.intro__content a {
+  color: hsl(var(--primary));
+  text-decoration: underline;
+}
+
+.intro__content strong {
+  font-weight: 600;
+}
+
+.intro__content em {
+  font-style: italic;
+}
+
+.intro__content code {
+  padding: 0 var(--space-1);
+  border: var(--border-width) solid hsl(var(--border));
+  background-color: hsl(var(--muted));
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.intro__content pre {
+  overflow-x: auto;
+  margin: 0 0 var(--space-3);
+  padding: var(--space-3);
+  border: var(--border-width) solid hsl(var(--border));
+  background-color: hsl(var(--muted));
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+.intro__content pre code {
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.intro__content blockquote {
+  margin: 0 0 var(--space-3);
+  padding-left: var(--space-3);
+  border-left: 3px solid hsl(var(--border));
+  color: hsl(var(--muted-foreground));
+}
+
+.intro__content table {
+  width: 100%;
+  margin-bottom: var(--space-3);
+  border-collapse: collapse;
+  font-size: var(--text-sm);
+}
+
+.intro__content th {
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-width) solid hsl(var(--border));
+  background-color: hsl(var(--muted));
+  text-align: left;
+  font-weight: 600;
+}
+
+.intro__content td {
+  padding: var(--space-1) var(--space-2);
+  border: var(--border-width) solid hsl(var(--border));
+  vertical-align: top;
+}
+
+.intro__content hr {
+  margin: var(--space-4) 0;
+  border: 0;
+  border-top: var(--border-width) solid hsl(var(--border));
+}
+
+.intro__content img {
+  max-width: 100%;
 }
 
 /* 语法高亮：只改颜色，不动字重与字距 —— 否则光标位置会随重绘跳动 */

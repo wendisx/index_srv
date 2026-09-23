@@ -33,6 +33,7 @@ const MANIFEST = [
   'check', // 编辑器：保存
   'x', // 编辑器：取消
   'rotate-ccw', // 编辑器：重置为初始内容
+  'book-open', // 页头：说明文档入口
   'info', // 提示：信息
   'circle-check', // 提示：成功
   'triangle-alert', // 提示：警告

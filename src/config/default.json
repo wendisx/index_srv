@@ -16,7 +16,8 @@
     "confDir": "conf",
     "sectionDir": "section",
     "legacyConfFile": "conf/sites.json",
-    "serviceSchemaFile": "conf/service.schema.json"
+    "serviceSchemaFile": "conf/service.schema.json",
+    "introPath": "intro"
   },
   "web": {
     "dir": "src/web",

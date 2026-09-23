@@ -4,6 +4,7 @@
 import { registerBackupRoutes } from './backup.js';
 import { registerConfigRoutes } from './config.js';
 import { registerHealthRoutes } from './health.js';
+import { registerIntroRoutes } from './intro.js';
 import { registerNamespaceRoutes } from './namespaces.js';
 import { registerNavRoutes } from './nav.js';
 import { registerPermissionRoutes } from './permission.js';
@@ -11,6 +12,7 @@ import { registerSiteRoutes } from './sites.js';
 
 export function registerApiRoutes(router) {
   registerHealthRoutes(router);
+  registerIntroRoutes(router);
   registerPermissionRoutes(router);
   registerConfigRoutes(router);
   registerNamespaceRoutes(router);

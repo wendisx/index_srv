@@ -167,7 +167,8 @@ server {
     "sectionDir": "section",           // 数据源分区目录（相对 dataDir）
     "logDir": "log",                   // 日志目录（相对 dataDir）
     "legacyConfFile": "conf/sites.json", // 旧版单文件，仅作迁移来源
-    "serviceSchemaFile": "conf/service.schema.json" // 新建服务的草稿骨架（启动时读入）
+    "serviceSchemaFile": "conf/service.schema.json", // 新建服务的草稿骨架（启动时读入）
+    "introPath": "intro"              // 说明文档（相对 dataDir，可以是目录或单个 .md 文件）
   },
   "web": {
     "dir": "src/web",             // 前端资源目录
@@ -196,6 +197,7 @@ server {
 | `INDEX_SRV_CORS_ORIGINS` | `server.cors` | 逗号分隔的来源列表，设置后自动开启 CORS |
 | `INDEX_SRV_DATA_DIR` | `storage.dataDir` | 数据根目录 |
 | `INDEX_SRV_LOG_DIR` | `storage.logDir` | 日志目录（相对 dataDir，也可给绝对路径） |
+| `INDEX_SRV_INTRO` | `storage.introPath` | 说明文档路径（相对 dataDir）：目录 → 多篇带目录栏；单个 `.md` → 只有一篇 |
 | `INDEX_SRV_WEB_DIR` | `web.dir` | 前端资源目录 |
 | `INDEX_SRV_WEB_CACHE` | `web.cacheMaxAge` | 静态资源缓存秒数 |
 | `INDEX_SRV_SECRET` | - | 服务密钥，**只从环境变量读取**（不落配置文件）；留空则接口只读 |
@@ -212,8 +214,10 @@ server {
 | `data/conf/settings.json` | 面板标题、默认主题与显示开关（配置类） |
 | `data/section/namespace.json` | 命名空间 |
 | `data/section/service.json` | 服务（含状态与自由属性） |
+| `data/intro/*.md` | 说明文档（Markdown，页头"说明"按钮读取并渲染） |
 
 - **改内容三条路**：① 页面内直接改（需提升为 super：目录行尾 `[+]` 新建服务、详情面板 `[pencil]` 编辑服务 JSON、侧栏头部 `[+]` 新建命名空间）；② 直接编辑 JSON 文件（改完需重启服务）；③ 调用 API（无需重启）。三种方式都只回写内容确实变化的那一份文件。
+- **说明文档**：页头的说明按钮读取 `data/intro` 下的 Markdown —— 该路径由 `storage.introPath` 配置，可以是**目录**（弹窗带左侧目录栏，按文件名排序）也可以是**单个 `.md` 文件**（只显示内容）；渲染在浏览器端用 vendored 的 marked 完成，服务端只发原文。文件名可用 `01-` 之类的前缀控制顺序，标题取文档里第一个 `#` 标题。
 - **扩展新建服务的草稿**：编辑 `data/conf/service.schema.json`（配置类文件，不参与上面三份分区的写回）—— 加一个字段，点 `[+]` 新建服务时草稿里就多一个占位（如 `"owner": ""`），改完需重启服务。缺失或内容不是 JSON 对象时回落到内置骨架，启动日志与 `GET /api/config` 的 `runtime.serviceSchemaSource` 会说明来源（`file` / `default` / `invalid`）。归属命名空间由客户端注入，模板里写了 `namespaceId` 也会被忽略。
 - **备份**：`cp -r data data.bak`，或 `curl -s http://127.0.0.1:8080/api/store -o backup.json`（整份导出为单个 JSON）。
 - **恢复**：把 `data.bak` 覆盖回 `data/` 后重启，或 `curl -X PUT .../api/store --data-binary @backup.json` 整份导入。
