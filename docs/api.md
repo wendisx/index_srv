@@ -263,6 +263,8 @@ curl -s -X POST http://127.0.0.1:8080/api/permission \
 - 摘要格式非法返回 `422`：`{"code":"validation_error","message":"digest 必须是密钥的 SHA-256 十六进制摘要"}`
 - 服务端未配置密钥返回 `401`：`{"code":"unauthorized","message":"服务端未配置服务密钥（INDEX_SRV_SECRET），无法提升权限"}`
 - 来源不在 `server.permissionAllowlist` 内返回 `403`：`{"code":"forbidden","message":"当前来源地址不在权限提升白名单内（server.permissionAllowlist）"}`
+- **每次提升尝试都会留痕**（应用日志，见 `docs/arch.md#55-日志`）：放行记 `info`、拦下记 `warn`，消息形如 `权限切换 3 user -> 0 super pass` / `3 user -> 0 super block`。字段：`ip`（TCP 对端真实地址，不信任 XFF）、`xForwardedFor` / `xRealIp`（请求携带时原样记录，便于对照代理链路）、`result`（`pass` / `block`）、`reason`（`digest` / `digest-mismatch` / `allowlist` / `invalid-digest` / `unconfigured`）
+- **降级（`0 → 3`）不产生服务端日志**：它是客户端清掉本地摘要的动作，服务端不保存任何会话状态（见 [§2](#2-鉴权与权限级别)）；服务端的日志只覆盖「提升」这一个动作
 - 该接口**本身不需要鉴权**（摘要即凭据）。服务端不保存任何会话状态：客户端把摘要存在本地，后续请求以 `x-service-digest` 带上；界面上点击权限组件时，`3 → 0` 弹窗输入密钥、`0 → 3` 清掉本地摘要
 
 ### 6.3 GET /api/config

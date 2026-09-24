@@ -445,6 +445,7 @@ flowchart LR
 - 文件按**类别 + 日期**切分：`app-YYYY-MM-DD.log`、`access-YYYY-MM-DD.log`；跨天时自动关闭旧流并创建新流。
 - 访问日志字段：`time` / `method` / `path` / `status` / `durationMs` / `ip`（来源 IP 优先取 `x-forwarded-for` 首段，否则取 socket 地址）。
 - 访问日志默认只落盘；`log.level=debug` 时同步打印到 stdout。
+- 权限切换留痕：`POST /api/permission` 每次尝试都写一条应用日志 —— 放行 `info`、拦下 `warn`，消息形如 `权限切换 3 user -> 0 super pass`（拦下为 `... block`），字段含 `ip`（TCP 对端真实地址）、`xForwardedFor` / `xRealIp`（请求携带时原样记录）、`result` 与 `reason`。
 - 退出时 `logger.close()` 关闭全部文件流，避免日志丢失。
 
 ### 5.6 接口分层约定

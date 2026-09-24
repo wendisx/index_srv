@@ -703,6 +703,31 @@ if (allowAt < 0) {
   bad.push('api/permission.js 把白名单判定放在了密钥校验之后（非白名单来源仍会进入密钥比对）');
 }
 
+/* ---------------- 19. 权限切换必须留痕 ---------------- */
+// 日志要能回答「谁在切、切成了什么」：对端真实地址 + 请求携带的转发头 + pass/block 与依据。
+// 少了任何一项，排查「为什么某台机器提升失败」时都只能靠猜。
+const permissionLog = stripJs(fs.readFileSync(path.join(ROOT, 'src', 'api', 'permission.js'), 'utf8'));
+if (!/logger\?\.(info|warn)\(/.test(permissionLog)) {
+  bad.push('api/permission.js 未使用 logger 记录权限切换');
+}
+// 按**调用点形态**断言：只查「文件里出现过 pass」会被 logSwitch 内部实现里的同名 token 蒙混过去
+for (const [pattern, message] of [
+  [/result: 'pass'/, "未记录放行（缺少 result: 'pass' 的调用点）"],
+  [/result: 'block'/, "未记录拦下（缺少 result: 'block' 的调用点）"],
+  [/reason: 'allowlist'/, '白名单拦截未留痕（missing reason: allowlist）'],
+  [/reason: 'digest-mismatch'/, '摘要错误未留痕（missing reason: digest-mismatch）'],
+  [/reason: 'unconfigured'/, '未配置密钥的拦截未留痕（missing reason: unconfigured）'],
+  [/reason: 'invalid-digest'/, '摘要格式非法未留痕（missing reason: invalid-digest）'],
+  // 同理：只断言「文件里出现过 x-forwarded-for」会被读取那一行蒙混过去，这里看的是写进日志字段
+  [/xForwardedFor: forwarded/, '权限切换日志未写出 x-forwarded-for 字段'],
+  [/xRealIp: realIp/, '权限切换日志未写出 x-real-ip 字段'],
+]) {
+  if (!pattern.test(permissionLog)) bad.push(`api/permission.js：${message}`);
+}
+if (!/result === 'pass'\)[\s\S]{0,40}logger\?\.info/.test(permissionLog) || !/logger\?\.warn\(/.test(permissionLog)) {
+  bad.push("api/permission.js 的日志等级不对：放行应记 info、拦下应记 warn");
+}
+
 /* ---------------- 输出 ---------------- */
 console.log(`文件: ${jsFiles.join(' ')}`);
 console.log(`id=${refIds.size} 模板=${templateIds.size} class=${usedClasses.size} 令牌=${defined.size} 图标=${spriteIds.size}`);

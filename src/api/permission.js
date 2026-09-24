@@ -39,17 +39,51 @@ export function resolvePermission(config, headers) {
   };
 }
 
+/**
+ * 权限切换留痕：一条日志同时回答「谁在切」与「切成了什么」。
+ *
+ *   ip            TCP 对端真实地址（不信任 XFF，见 core/http.js 的 clientIp）
+ *   xForwardedFor / xRealIp  请求携带的转发头原样记录 —— 便于和代理链路对照排查
+ *   from / to     切换起点与**本次请求的目标级别**（提升接口的目标恒为 0 super；
+ *                 被拦下时级别实际没变，是否真的切成了看 result）
+ *   result        pass（放行）/ block（拦下）
+ *   reason        判定依据：digest / digest-mismatch / allowlist / invalid-digest / unconfigured
+ *
+ * 消息形如 `权限切换 3 user -> 0 super pass`，被拦下的提升则是 `3 user -> 0 super block`。
+ * 放行打 info，拦下打 warn —— 被拒的提升是需要被注意的事件。
+ */
+function logSwitch(logger, req, { from, to, result, reason }) {
+  const headers = req?.headers ?? {};
+  const forwarded = headers['x-forwarded-for'];
+  const realIp = headers['x-real-ip'];
+  const message = `权限切换 ${from.level} ${from.role} -> ${to.level} ${to.role} ${result}`;
+  const fields = {
+    ip: clientIp(req),
+    ...(forwarded ? { xForwardedFor: forwarded } : {}),
+    ...(realIp ? { xRealIp: realIp } : {}),
+    result,
+    reason,
+  };
+  if (result === 'pass') logger?.info(message, fields);
+  else logger?.warn(message, fields);
+}
+
 export function registerPermissionRoutes(router) {
   router.get('/api/permission', ({ res, config, req }) => {
     ok(res, resolvePermission(config, req.headers));
   });
 
   router.post('/api/permission', async (ctx) => {
-    const { req, res, config } = ctx;
+    const { req, res, config, logger } = ctx;
+    // 该请求自身不带凭据（摘要只出现在请求体里），所以切换起点恒为匿名 user、目标恒为 0 super；
+    // 被拦下时级别其实没变 —— 日志里是否真的切成了由 result 表达
+    const anonymous = { level: PERMISSION_USER, role: 'user' };
+    const target = { level: PERMISSION_SUPER, role: 'super' };
 
     // 来源白名单先于密钥校验：非白名单来源不该进入密钥比对流程，
     // 顺带避免把「摘要格式对不对」这类信息回给它们
     if (!isIpAllowed(config.server?.permissionAllowlist, clientIp(req))) {
+      logSwitch(logger, req, { from: anonymous, to: target, result: 'block', reason: 'allowlist' });
       throw forbidden('当前来源地址不在权限提升白名单内（server.permissionAllowlist）');
     }
 
@@ -57,16 +91,26 @@ export function registerPermissionRoutes(router) {
     const digest = requireString(body.digest, 'digest', { max: 64 });
 
     if (!isDigestFormat(digest)) {
+      logSwitch(logger, req, { from: anonymous, to: target, result: 'block', reason: 'invalid-digest' });
       throw validationError('digest 必须是密钥的 SHA-256 十六进制摘要', { field: 'digest' });
     }
     if (!config.auth?.secretDigest) {
+      logSwitch(logger, req, { from: anonymous, to: target, result: 'block', reason: 'unconfigured' });
       throw unauthorized('服务端未配置服务密钥（INDEX_SRV_SECRET），无法提升权限');
     }
     if (!verifyDigest(config, { 'x-service-digest': digest })) {
+      logSwitch(logger, req, { from: anonymous, to: target, result: 'block', reason: 'digest-mismatch' });
       throw unauthorized('服务密钥不正确');
     }
 
     // 与 GET /api/permission 用同一处判定：此处摘要已验证，secretRequired 必为 true
-    ok(res, resolvePermission(config, { 'x-service-digest': digest }));
+    const resolved = resolvePermission(config, { 'x-service-digest': digest });
+    logSwitch(logger, req, {
+      from: anonymous,
+      to: { level: resolved.level, role: resolved.role },
+      result: 'pass',
+      reason: 'digest',
+    });
+    ok(res, resolved);
   });
 }

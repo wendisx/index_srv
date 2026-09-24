@@ -806,6 +806,39 @@ async function checkIntro() {
   );
 }
 
+/**
+ * 读临时 dataDir 下的应用日志（JSON Lines）。日志是流式写入的，所以允许短轮询；
+ * 注意 `INDEX_SRV_LOG_LEVEL=error` 只过滤 stdout，文件始终写 —— 这正是这里能断言的前提。
+ */
+async function waitForLog(dataDir, predicate, timeoutMs = 2000) {
+  const dir = path.join(dataDir, 'log');
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const records = fs.existsSync(dir)
+      ? fs
+          .readdirSync(dir)
+          .filter((file) => file.startsWith('app-'))
+          .flatMap((file) =>
+            fs
+              .readFileSync(path.join(dir, file), 'utf8')
+              .split('\n')
+              .filter(Boolean)
+              .flatMap((line) => {
+                try {
+                  return [JSON.parse(line)];
+                } catch {
+                  return [];
+                }
+              }),
+          )
+      : [];
+    const hit = records.find(predicate);
+    if (hit) return hit;
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  }
+  return null;
+}
+
 /* ---------------- 模式六：权限提升的来源白名单（server.permissionAllowlist） ---------------- */
 
 /**
@@ -892,15 +925,79 @@ async function checkPermissionAllowlist() {
   }
 }
 
+/* ---------------- 模式七：权限切换留痕（对端地址 + 转发头 + 级别迁移 + pass/block） ---------------- */
+
+/**
+ * 一次权限切换要能在日志里回答三个问题：谁在切（对端真实地址 + 请求携带的转发头）、
+ * 切前切后的级别（3 user / 0 super）、结果（pass / block）与依据（reason）。
+ */
+async function checkPermissionLogging() {
+  const digest = digestOf(TEST_SECRET);
+  const elevate = (base, body, headers = {}) =>
+    fetch(`${base}/api/permission`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify(body),
+    });
+
+  /* ① 放行：记录对端地址与转发头，消息为「3 user -> 0 super pass」 */
+  await withServer({ INDEX_SRV_SECRET: TEST_SECRET }, async ({ base, dataDir }) => {
+    await elevate(base, { digest }, { 'x-forwarded-for': '203.0.113.9, 10.0.0.1', 'x-real-ip': '203.0.113.9' });
+    const pass = await waitForLog(dataDir, (record) => record.message?.endsWith('0 super pass'));
+    if (!pass) {
+      bad.push('提升成功的日志缺失（期望「权限切换 3 user -> 0 super pass」）');
+    } else {
+      if (pass.message !== '权限切换 3 user -> 0 super pass') bad.push(`提升日志文案不符：${pass.message}`);
+      if (pass.level !== 'info') bad.push(`放行应记 info 级别，实际 ${pass.level}`);
+      if (pass.ip !== '127.0.0.1') bad.push(`提升日志应记录 TCP 对端地址，实际 ${pass.ip}`);
+      if (pass.xForwardedFor !== '203.0.113.9, 10.0.0.1') {
+        bad.push(`提升日志未原样记录 x-forwarded-for，实际 ${pass.xForwardedFor}`);
+      }
+      if (pass.xRealIp !== '203.0.113.9') bad.push(`提升日志未记录 x-real-ip，实际 ${pass.xRealIp}`);
+      if (pass.reason !== 'digest') bad.push(`提升日志的 reason 应为 digest，实际 ${pass.reason}`);
+    }
+
+    /* ② 摘要错误：同样留痕，但结果是 block（warn 级别） */
+    await elevate(base, { digest: digestOf('wrong-secret') });
+    const blocked = await waitForLog(
+      dataDir,
+      (record) => record.reason === 'digest-mismatch',
+    );
+    if (!blocked) {
+      bad.push('摘要错误的拦下日志缺失（期望 reason 为 digest-mismatch 的记录）');
+    } else {
+      if (blocked.message !== '权限切换 3 user -> 0 super block') bad.push(`拦下日志文案不符：${blocked.message}`);
+      if (blocked.level !== 'warn') bad.push(`拦下应记 warn 级别，实际 ${blocked.level}`);
+      if ('xForwardedFor' in blocked) bad.push('请求没带转发头时不应凭空写出 xForwardedFor 字段');
+    }
+  });
+
+  /* ③ 白名单拦截：reason 为 allowlist 的 block 记录 */
+  await withServer(
+    { INDEX_SRV_SECRET: TEST_SECRET, INDEX_SRV_PERMISSION_ALLOWLIST: '10.99.0.0/16' },
+    async ({ base, dataDir }) => {
+      await elevate(base, { digest });
+      const blocked = await waitForLog(dataDir, (record) => record.reason === 'allowlist');
+      if (!blocked) bad.push('白名单拦截的日志缺失（期望 reason 为 allowlist 的记录）');
+      else if (blocked.message !== '权限切换 3 user -> 0 super block') {
+        bad.push(`白名单拦截日志文案不符：${blocked.message}`);
+      }
+    },
+  );
+
+  /* ④ 未配置密钥时的拦截也要留痕：reason 为 unconfigured */
+  await withServer({ INDEX_SRV_SECRET: '' }, async ({ base, dataDir }) => {
+    await elevate(base, { digest });
+    const blocked = await waitForLog(dataDir, (record) => record.reason === 'unconfigured');
+    if (!blocked) bad.push('未配置密钥时的拦下日志缺失（期望 reason 为 unconfigured 的记录）');
+  });
+}
+
 async function main() {
   await checkReadOnlyMode();
   await checkSecretMode();
   await checkPermissionAllowlist();
-  await checkLegacyMigration();
-  await checkServiceSchema();
-  await checkIntro();
-  await checkReadOnlyMode();
-  await checkSecretMode();
+  await checkPermissionLogging();
   await checkLegacyMigration();
   await checkServiceSchema();
   await checkIntro();
@@ -910,7 +1007,7 @@ async function main() {
     process.exit(1);
   }
   console.log(
-    '✔ 端到端冒烟通过（页面 + 全部静态资源 + 只读模式 + 密钥鉴权 + 权限提升白名单 + 数据往返 + 分区写回 + 旧文件迁移 + 草稿骨架可配置 + 说明文档两种形态 + 新建命名空间 + 编辑服务 + 自定义字段 + 无删除接口 + 穿越防护 + 协商缓存）',
+    '✔ 端到端冒烟通过（页面 + 全部静态资源 + 只读模式 + 密钥鉴权 + 权限提升白名单 + 权限切换留痕 + 数据往返 + 分区写回 + 旧文件迁移 + 草稿骨架可配置 + 说明文档两种形态 + 新建命名空间 + 编辑服务 + 自定义字段 + 无删除接口 + 穿越防护 + 协商缓存）',
   );
 }
 
