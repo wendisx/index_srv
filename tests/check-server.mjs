@@ -855,11 +855,17 @@ async function checkPermissionAllowlist() {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ digest }),
     });
+  const write = (base, title) =>
+    fetch(`${base}/api/config`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', 'x-service-digest': digest },
+      body: JSON.stringify({ title }),
+    });
 
   /* ① 环境变量把本机排除在外（白名单只含一个不相干的网段） */
   await withServer(
     { INDEX_SRV_SECRET: TEST_SECRET, INDEX_SRV_PERMISSION_ALLOWLIST: '10.99.0.0/16' },
-    async ({ base }) => {
+    async ({ base, dataDir }) => {
       const blocked = await elevate(base);
       if (blocked.status !== 403) bad.push(`白名单外来源提升应 403，实际 ${blocked.status}`);
       else {
@@ -875,18 +881,37 @@ async function checkPermissionAllowlist() {
       if (permission.data?.level !== 0) {
         bad.push('白名单不应影响 GET /api/permission 的摘要判定（查询没有副作用）');
       }
-      const write = await fetch(`${base}/api/config`, {
-        method: 'PUT',
-        headers: { 'content-type': 'application/json', 'x-service-digest': digest },
-        body: JSON.stringify({ title: '白名单下的写入' }),
-      });
-      if (write.status !== 200) {
-        bad.push(`白名单不应影响写操作（写操作以摘要为准），实际 ${write.status}`);
+      // 摘要链路（写操作）默认同样受白名单约束：摘要有效也写不进来
+      const blockedWrite = await write(base, '白名单下的写入');
+      if (blockedWrite.status !== 403) {
+        bad.push(`白名单外的写操作（摘要链路）应 403，实际 ${blockedWrite.status}`);
+      }
+      const writeLog = await waitForLog(dataDir, (record) => record.message === '写操作被拦下：来源不在白名单内');
+      if (!writeLog) bad.push('写操作被白名单拦下时缺少留痕（期望 reason 为 allowlist 的应用日志）');
+    },
+  );
+
+  /* ② 关掉开关（INDEX_SRV_DIGEST_ALLOWLIST=false）：写操作退回「只看摘要」，
+        但提升接口不受该开关影响 —— 它始终受白名单约束 */
+  await withServer(
+    {
+      INDEX_SRV_SECRET: TEST_SECRET,
+      INDEX_SRV_PERMISSION_ALLOWLIST: '10.99.0.0/16',
+      INDEX_SRV_DIGEST_ALLOWLIST: 'false',
+    },
+    async ({ base }) => {
+      const allowed = await write(base, '关掉开关后的写入');
+      if (allowed.status !== 200) {
+        bad.push(`关掉 digestAllowlistEnabled 后写操作应放行，实际 ${allowed.status}`);
+      }
+      const stillBlocked = await elevate(base);
+      if (stillBlocked.status !== 403) {
+        bad.push(`提升接口不受 digestAllowlistEnabled 影响，白名单外仍应 403，实际 ${stillBlocked.status}`);
       }
     },
   );
 
-  /* ② 白名单放行本机：提升恢复正常 */
+  /* ③ 白名单放行本机：提升与写操作都恢复正常 */
   await withServer(
     { INDEX_SRV_SECRET: TEST_SECRET, INDEX_SRV_PERMISSION_ALLOWLIST: '127.0.0.1/32' },
     async ({ base }) => {
@@ -895,10 +920,14 @@ async function checkPermissionAllowlist() {
       if (elevated.status !== 200 || body.data?.level !== 0) {
         bad.push(`白名单内来源应能提升（200 / level 0），实际 ${elevated.status} / ${body.data?.level}`);
       }
+      const allowed = await write(base, '白名单内的写入');
+      if (allowed.status !== 200) {
+        bad.push(`白名单内来源的写操作应放行（开关默认开启也只约束名单外的来源），实际 ${allowed.status}`);
+      }
     },
   );
 
-  /* ③ 配置文件写法（默认用法）：拷一份默认配置，把白名单写进 server 段 */
+  /* ④ 配置文件写法（默认用法）：拷一份默认配置，把白名单写进 server 段 */
   const defaults = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'config', 'default.json'), 'utf8'));
   const configFile = path.join(os.tmpdir(), `index-srv-allowlist-${process.pid}.json`);
   fs.writeFileSync(
@@ -916,11 +945,16 @@ async function checkPermissionAllowlist() {
     fs.rmSync(configFile, { force: true });
   }
 
-  /* ④ 默认配置必须放行回环：本机开发与上面的用例都依赖它
+  /* ⑤ 默认配置必须放行回环：本机开发与上面的用例都依赖它
         （默认列表到底覆盖了哪些网段，由 check-static 用 net.js 的匹配函数实算把关） */
   if (!(defaults.server?.permissionAllowlist ?? []).includes('127.0.0.0/8')) {
     bad.push(
       `默认配置的 permissionAllowlist 应放行回环（127.0.0.0/8），实际 ${JSON.stringify(defaults.server?.permissionAllowlist)}`,
+    );
+  }
+  if (defaults.server?.digestAllowlistEnabled !== true) {
+    bad.push(
+      `默认配置的 digestAllowlistEnabled 应为 true（摘要链路默认受白名单约束），实际 ${defaults.server?.digestAllowlistEnabled}`,
     );
   }
 }
@@ -993,11 +1027,154 @@ async function checkPermissionLogging() {
   });
 }
 
+/* ---------------- 模式八：可信网段免密钥（server.trustedNetworkBypass） ---------------- */
+
+/**
+ * 浏览器在**非安全上下文**（`http://内网IP`）下没有 Web Crypto，算不出摘要，
+ * 客户端会直接拒绝提权（连请求都不发）。这条通道把「白名单网段」本身当作凭据：
+ * 开启后白名单内来源免摘要即 super，提权与写入都放行。
+ */
+async function checkTrustedNetworkBypass() {
+  const digest = digestOf(TEST_SECRET);
+  const getPermission = async (base, headers = {}) =>
+    (await (await fetch(`${base}/api/permission`, { headers })).json()).data;
+  const putConfig = (base, title, headers = {}) =>
+    fetch(`${base}/api/config`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json', ...headers },
+      body: JSON.stringify({ title }),
+    });
+  const elevate = (base, headers = {}) =>
+    fetch(`${base}/api/permission`, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: '{}' });
+
+  /* ① 开关关闭（默认）：白名单内也必须提交摘要 —— 凭据仍是密钥 */
+  await withServer({ INDEX_SRV_SECRET: TEST_SECRET }, async ({ base }) => {
+    const permission = await getPermission(base, { 'x-service-digest': digest });
+    if (permission.level !== 0 || permission.reason !== 'digest') {
+      bad.push(`开关关闭时应靠摘要提升为 super/digest，实际 ${JSON.stringify(permission)}`);
+    }
+    const write = await putConfig(base, '默认下不带摘要的写入');
+    if (write.status !== 401) bad.push(`开关关闭时不带摘要的写操作应 401，实际 ${write.status}`);
+  });
+
+  /* ② 开关打开：白名单内免摘要即 super（提权与写入都放行），且启动与切换都留痕 */
+  await withServer(
+    { INDEX_SRV_SECRET: TEST_SECRET, INDEX_SRV_TRUSTED_BYPASS: 'true' },
+    async ({ base, dataDir }) => {
+      const permission = await getPermission(base);
+      if (permission.level !== 0 || permission.reason !== 'trusted-network') {
+        bad.push(`可信网段内应免密钥下发 super/trusted-network，实际 ${JSON.stringify(permission)}`);
+      }
+      const elevated = await elevate(base);
+      const body = await elevated.json().catch(() => ({}));
+      if (elevated.status !== 200 || body.data?.reason !== 'trusted-network') {
+        bad.push(`可信网段内的提升应 200 / trusted-network，实际 ${elevated.status} / ${body.data?.reason}`);
+      }
+      const write = await putConfig(base, '可信网段免密钥写入');
+      if (write.status !== 200) {
+        bad.push(`可信网段内不带任何凭据的写操作应 200，实际 ${write.status}`);
+      }
+      const switchLog = await waitForLog(
+        dataDir,
+        (record) => record.reason === 'trusted-network' && record.result === 'pass',
+      );
+      if (!switchLog) bad.push('可信网段免密钥的权限切换没有留痕（期望 reason 为 trusted-network 的记录）');
+      const bootLog = await waitForLog(
+        dataDir,
+        (record) => record.message === '可信网段免密钥已启用：白名单内的来源无需服务密钥即可提权与写入',
+      );
+      if (!bootLog) bad.push('启动时未提示可信网段免密钥已启用（该模式必须可见）');
+    },
+  );
+
+  /* ③ 开关打开但来源不在白名单：仍然 403 —— 网段本身就是凭据 */
+  await withServer(
+    {
+      INDEX_SRV_SECRET: TEST_SECRET,
+      INDEX_SRV_TRUSTED_BYPASS: 'true',
+      INDEX_SRV_PERMISSION_ALLOWLIST: '10.99.0.0/16',
+    },
+    async ({ base }) => {
+      const blockedElevate = await elevate(base);
+      if (blockedElevate.status !== 403) {
+        bad.push(`可信网段之外即便打开开关也应 403（提升），实际 ${blockedElevate.status}`);
+      }
+      const blockedWrite = await putConfig(base, '名单外写入');
+      if (blockedWrite.status !== 403) {
+        bad.push(`可信网段之外的写操作应 403，实际 ${blockedWrite.status}`);
+      }
+    },
+  );
+
+  /* ④ 安全前提：未配置密钥时，来源再可信也仍然只读 */
+  await withServer({ INDEX_SRV_SECRET: '', INDEX_SRV_TRUSTED_BYPASS: 'true' }, async ({ base }) => {
+    const permission = await getPermission(base);
+    if (permission.level !== 3 || permission.reason !== 'unconfigured') {
+      bad.push(`未配置密钥时应保持只读（3 / unconfigured），实际 ${JSON.stringify(permission)}`);
+    }
+    const write = await putConfig(base, '无密钥时的写入');
+    if (write.status !== 401) bad.push(`未配置密钥时不计凭据的写操作也应 401（只读优先），实际 ${write.status}`);
+  });
+}
+
+/* ---------------- 模式九：反代后的客户端地址（X-Forwarded-For 只在可信代理后采信） ---------------- */
+
+/**
+ * 前置 nginx 后：socket 对端恒为代理，白名单必须靠 XFF；但无条件采信 XFF 等于把
+ * 白名单交给伪造者。判定标准用的是「提升接口的 403（白名单拦下）vs 401（放行但摘要不对）」，
+ * 这样能精确看出服务端最终采信的是哪个地址。
+ */
+async function checkTrustedProxies() {
+  const digest = digestOf('wrong-secret'); // 摘要故意不对：通过白名单后必然 401
+  const elevate = (base, xff) =>
+    fetch(`${base}/api/permission`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...(xff ? { 'x-forwarded-for': xff } : {}) },
+      body: JSON.stringify({ digest }),
+    });
+  const allowOnlyVpn = { INDEX_SRV_PERMISSION_ALLOWLIST: '10.99.0.0/16' };
+
+  /* ① 未配置可信代理：伪造 XFF 无效，白名单仍按 socket 地址（127.0.0.1）拦下 */
+  await withServer({ INDEX_SRV_SECRET: TEST_SECRET, ...allowOnlyVpn }, async ({ base }) => {
+    const status = (await elevate(base, '10.99.0.5')).status;
+    if (status !== 403) bad.push(`未配置可信代理时伪造 XFF 不应生效（期望 403），实际 ${status}`);
+  });
+
+  /* ② 对端是可信代理：采信 XFF 里的真实客户端（落在放行网段内 → 401 而非 403） */
+  await withServer(
+    { INDEX_SRV_SECRET: TEST_SECRET, ...allowOnlyVpn, INDEX_SRV_TRUSTED_PROXIES: '127.0.0.1/32' },
+    async ({ base, dataDir }) => {
+      const status = (await elevate(base, '10.99.0.5')).status;
+      if (status !== 401) bad.push(`可信代理后应按 XFF 识别客户端（期望 401），实际 ${status}`);
+
+      // 客户端伪造前置项：取右端（代理亲眼看到的那个）才是真值
+      const spoofed = (await elevate(base, '203.0.113.9, 10.99.0.5')).status;
+      if (spoofed !== 401) bad.push(`应取 XFF 右端地址（期望 401），实际 ${spoofed}`);
+
+      // 回归（实测发现过）：最右项本身是可信代理（如 Docker 把宿主机来源改写成网桥网关）
+      // 时不得继续往左找 —— 那一段是客户端可控的，会变成「伪造即通过白名单」
+      const gateway = (await elevate(base, '10.99.0.5, 127.0.0.1')).status;
+      if (gateway !== 403) bad.push(`最右项是可信代理时不得采信左侧伪造值（期望 403），实际 ${gateway}`);
+
+      // 反向确认：右端是公网地址时仍应被白名单拦下（说明确实在用 XFF，而非放行一切）
+      const outside = (await elevate(base, '203.0.113.9')).status;
+      if (outside !== 403) bad.push(`可信代理但客户端在放行网段外应 403，实际 ${outside}`);
+
+      // 留痕里也应是对端真实地址（不是 nginx 容器地址）
+      const record = await waitForLog(dataDir, (r) => r.reason === 'digest-mismatch');
+      if (!record) bad.push('按 XFF 识别客户端后缺少拦下留痕');
+      else if (record.ip !== '10.99.0.5') bad.push(`留痕里的 ip 应为解析后的客户端地址，实际 ${record.ip}`);
+    },
+  );
+}
+
 async function main() {
   await checkReadOnlyMode();
   await checkSecretMode();
   await checkPermissionAllowlist();
   await checkPermissionLogging();
+  await checkTrustedNetworkBypass();
+  await checkTrustedProxies();
   await checkLegacyMigration();
   await checkServiceSchema();
   await checkIntro();
@@ -1007,7 +1184,7 @@ async function main() {
     process.exit(1);
   }
   console.log(
-    '✔ 端到端冒烟通过（页面 + 全部静态资源 + 只读模式 + 密钥鉴权 + 权限提升白名单 + 权限切换留痕 + 数据往返 + 分区写回 + 旧文件迁移 + 草稿骨架可配置 + 说明文档两种形态 + 新建命名空间 + 编辑服务 + 自定义字段 + 无删除接口 + 穿越防护 + 协商缓存）',
+    '✔ 端到端冒烟通过（页面 + 全部静态资源 + 只读模式 + 密钥鉴权 + 权限提升白名单 + 权限切换留痕 + 可信网段免密钥 + 反代客户端地址 + 数据往返 + 分区写回 + 旧文件迁移 + 草稿骨架可配置 + 说明文档两种形态 + 新建命名空间 + 编辑服务 + 自定义字段 + 无删除接口 + 穿越防护 + 协商缓存）',
   );
 }
 

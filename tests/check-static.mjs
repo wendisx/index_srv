@@ -694,6 +694,39 @@ if (!/INDEX_SRV_PERMISSION_ALLOWLIST/.test(configSrc)) {
 if (!/permissionAllowlist:\s*envAllowlist\.length/.test(configSrc)) {
   bad.push('core/config.js 的 permissionAllowlist 未取自环境变量列表（设置 INDEX_SRV_PERMISSION_ALLOWLIST 不会生效）');
 }
+// 摘要链路（写操作）的开关：默认必须是「受约束」，且要能从环境变量关掉
+if (defaultConfig.server?.digestAllowlistEnabled !== true) {
+  bad.push('src/config/default.json 的 server.digestAllowlistEnabled 应为 true（摘要链路默认受白名单约束）');
+}
+if (!/INDEX_SRV_DIGEST_ALLOWLIST/.test(configSrc)) {
+  bad.push('core/config.js 未读取环境变量 INDEX_SRV_DIGEST_ALLOWLIST（开关无法在部署时覆盖）');
+}
+if (!/digestAllowlistEnabled,/.test(configSrc)) {
+  bad.push('core/config.js 未把开关挂到 server.digestAllowlistEnabled');
+}
+// 写操作鉴权（api/guard.js）：网段判定必须在摘要校验之前，否则非信任来源仍会进入密钥比对
+const guardSrc = stripJs(fs.readFileSync(path.join(ROOT, 'src', 'api', 'guard.js'), 'utf8'));
+if (!/digestAllowlistEnabled !== false/.test(guardSrc)) {
+  bad.push('api/guard.js 的写操作鉴权没有读取 digestAllowlistEnabled（开关形同虚设）');
+}
+if (!/写操作被拦下/.test(guardSrc) || !/forwardedHeaders\(req\)/.test(guardSrc)) {
+  bad.push('api/guard.js 拦下写操作时没有留痕（或没带上请求携带的转发头）');
+}
+// 转发头字段本体只在 core/http.js 里实现一次，两处日志都复用它
+const httpSrc = stripJs(fs.readFileSync(path.join(ROOT, 'src', 'core', 'http.js'), 'utf8'));
+if (!/xForwardedFor: headers\['x-forwarded-for'\]/.test(httpSrc) || !/xRealIp: headers\['x-real-ip'\]/.test(httpSrc)) {
+  bad.push('core/http.js 的 forwardedHeaders 未输出 x-forwarded-for / x-real-ip（日志里的转发头会丢）');
+}
+const requireAuthBody = guardSrc.slice(guardSrc.indexOf('export function requireAuth'));
+if (!/isIpAllowed\(/.test(requireAuthBody)) {
+  bad.push('api/guard.js 的写操作鉴权未做来源白名单判定（摘要链路形同虚设）');
+} else if (
+  requireAuthBody.indexOf('isIpAllowed(') > requireAuthBody.indexOf('verifyDigest(')
+) {
+  // 注意比的是「摘要比对」而不是第一次出现 secretDigest：可信网段分支里先判
+  // 「有没有配密钥」是刻意的（未配置密钥 = 只读，优先于便利）
+  bad.push('api/guard.js 把网段判定放在了摘要比对之后（非白名单来源仍会进入密钥比对）');
+}
 const permissionSrc = stripJs(fs.readFileSync(path.join(ROOT, 'src', 'api', 'permission.js'), 'utf8'));
 const allowAt = permissionSrc.indexOf('isIpAllowed(');
 const digestCheckAt = permissionSrc.indexOf('isDigestFormat(');
@@ -718,14 +751,143 @@ for (const [pattern, message] of [
   [/reason: 'digest-mismatch'/, '摘要错误未留痕（missing reason: digest-mismatch）'],
   [/reason: 'unconfigured'/, '未配置密钥的拦截未留痕（missing reason: unconfigured）'],
   [/reason: 'invalid-digest'/, '摘要格式非法未留痕（missing reason: invalid-digest）'],
-  // 同理：只断言「文件里出现过 x-forwarded-for」会被读取那一行蒙混过去，这里看的是写进日志字段
-  [/xForwardedFor: forwarded/, '权限切换日志未写出 x-forwarded-for 字段'],
-  [/xRealIp: realIp/, '权限切换日志未写出 x-real-ip 字段'],
+  // 同理：只断言「文件里出现过 x-forwarded-for」会被读取那一行蒙混过去，这里看的是日志确实带上了转发头
+  [/forwardedHeaders\(req\)/, '权限切换日志未带上请求携带的转发头（应复用 core/http.js 的 forwardedHeaders）'],
 ]) {
   if (!pattern.test(permissionLog)) bad.push(`api/permission.js：${message}`);
 }
 if (!/result === 'pass'\)[\s\S]{0,40}logger\?\.info/.test(permissionLog) || !/logger\?\.warn\(/.test(permissionLog)) {
   bad.push("api/permission.js 的日志等级不对：放行应记 info、拦下应记 warn");
+}
+
+/* ---------------- 20. 可信网段免密钥：开关、三处接入与安全前提 ---------------- */
+// 浏览器在 http 下没有 Web Crypto（算不出摘要），这条通道把「白名单网段」当成凭据。
+// 它改变了凭据模型，因此三件事必须成立：默认关闭、三处入口都认这条通道、
+// 以及「未配置密钥 ⇒ 仍然只读」的安全默认优先于便利。
+if (defaultConfig.server?.trustedNetworkBypass !== false) {
+  bad.push('src/config/default.json 的 server.trustedNetworkBypass 应为 false（默认不改动凭据模型）');
+}
+if (!/INDEX_SRV_TRUSTED_BYPASS/.test(configSrc) || !/trustedNetworkBypass,/.test(configSrc)) {
+  bad.push('core/config.js 未读取 / 未挂载 INDEX_SRV_TRUSTED_BYPASS（开关无法在部署时覆盖）');
+}
+if (!/export function isTrustedSource/.test(guardSrc)) {
+  bad.push('api/guard.js 未导出 isTrustedSource（可信网段判定无处复用）');
+}
+if (!/trusted && secretRequired/.test(permissionSrc)) {
+  bad.push('api/permission.js 的可信网段分支没有要求「服务端已配置密钥」——未配置密钥时会悄悄变成可写');
+}
+for (const [file, text] of [
+  ['permission.js', permissionSrc],
+  ['nav.js', stripJs(fs.readFileSync(path.join(ROOT, 'src', 'api', 'nav.js'), 'utf8'))],
+]) {
+  if (!/isTrustedSource\(config, req\)/.test(text)) {
+    bad.push(`api/${file} 未把可信网段判定接进权限结果（页头与实际写入会不一致）`);
+  }
+}
+if (!/可信网段免密钥已启用/.test(stripJs(fs.readFileSync(path.join(ROOT, 'src', 'server.js'), 'utf8')))) {
+  bad.push('server.js 未在启动日志里提示「可信网段免密钥已启用」（该模式必须可见）');
+}
+
+/* ---------------- 21. 反代部署：可信代理与真实客户端地址 ---------------- */
+// 前置 nginx 后 socket 对端恒为代理，白名单必须靠 X-Forwarded-For 才能看到真实客户端；
+// 但 XFF 可被伪造，所以「必须配置 trustedProxies + 只在可信代理后采信」这两条缺一不可。
+if (!Array.isArray(defaultConfig.server?.trustedProxies)) {
+  bad.push('src/config/default.json 缺少 server.trustedProxies（数组，空数组表示没有可信代理）');
+}
+if (!/INDEX_SRV_TRUSTED_PROXIES/.test(configSrc) || !/trustedProxies: envProxies\.length/.test(configSrc)) {
+  bad.push('core/config.js 未读取 / 未挂载 INDEX_SRV_TRUSTED_PROXIES（容器部署无法指定代理地址）');
+}
+const netSrc = stripJs(fs.readFileSync(path.join(ROOT, 'src', 'core', 'net.js'), 'utf8'));
+if (!/export function resolveClientIp/.test(netSrc)) {
+  bad.push('core/net.js 缺少 resolveClientIp（反代后的真实客户端地址无从还原）');
+}
+// 空列表必须是「不可信」而不是「全部可信」—— 这里复用 isIpAllowed 会踩到它「空 = 不限制」的语义
+if (!/trustedProxies\.length === 0\) return false/.test(netSrc)) {
+  bad.push('core/net.js 未把「无可信代理」当作不可信（空列表会变成采信任何 XFF）');
+}
+// http.js 的 clientIp 不能再直接读 XFF，必须经 resolveClientIp
+if (!/resolveClientIp\(/.test(httpSrc)) {
+  bad.push('core/http.js 的 clientIp 未经过 resolveClientIp（XFF 会被无条件采信）');
+}
+// 三处使用点都要把可信代理列表传下去，否则白名单仍按代理地址判定
+for (const [file, text] of [
+  ['api/guard.js', guardSrc],
+  ['api/permission.js', permissionSrc],
+  ['server.js', stripJs(fs.readFileSync(path.join(ROOT, 'src', 'server.js'), 'utf8'))],
+]) {
+  if (!/clientIp\(req, config\.server\??\.trustedProxies\)/.test(text)) {
+    bad.push(`${file} 未按可信代理解析来源地址（白名单会看到代理容器地址）`);
+  }
+}
+
+/* ---------------- 22. 前后端分离部署：编排与 nginx 配置的约定 ---------------- */
+// 这些文件不在运行时被任何模块加载，出错的代价却很高（白名单失效、外部绕过反代、起不来），
+// 所以在这里钉住几条关键耦合。
+// 去注释后再断言：注释里出现的文件名字样（如「ca.key 不进容器」）不该触发误报
+const compose = fs
+  .readFileSync(path.join(ROOT, 'docker-compose.yml'), 'utf8')
+  .replace(/^\s*#.*$/gm, '');
+const nginxConf = fs.readFileSync(path.join(ROOT, 'deploy', 'nginx.conf'), 'utf8');
+const stripNginxComments = (text) => text.replace(/^\s*#.*$/gm, '');
+
+// ① api 不得发布端口：它是「外部只能经 nginx 访问」的唯一保证
+const apiBlock = /^  api:\n([\s\S]*?)\n  web:/m.exec(compose)?.[1] ?? '';
+const webBlock = /^  web:\n([\s\S]*?)\nnetworks:/m.exec(compose)?.[1] ?? '';
+if (!apiBlock || !webBlock) bad.push('docker-compose.yml 结构不符合预期（应包含 api 与 web 两个服务）');
+if (/^\s{4}ports:/m.test(apiBlock)) {
+  bad.push('docker-compose.yml 的 api 服务发布了端口：外部可绕过 nginx 直连后端，白名单与 TLS 都会失效');
+}
+if (!/^\s{4}ports:/m.test(webBlock)) bad.push('docker-compose.yml 的 web 服务未发布端口（对外无入口）');
+
+// ② 可信代理默认值必须与 panel 子网一致：不一致时白名单看到的是代理地址，判定全乱
+const netSubnet = /subnet:\s*\$\{INDEX_SRV_NET_SUBNET:-([^}]+)\}/.exec(compose)?.[1];
+const trustedProxies = /INDEX_SRV_TRUSTED_PROXIES:\s*\$\{INDEX_SRV_TRUSTED_PROXIES:-([^}]+)\}/.exec(compose)?.[1];
+if (!netSubnet || !trustedProxies) {
+  bad.push('docker-compose.yml 未同时声明 panel 子网与可信代理默认值（两者必须成对出现）');
+} else if (netSubnet !== trustedProxies) {
+  bad.push(`panel 子网(${netSubnet})与可信代理默认值(${trustedProxies})不一致：白名单会按代理地址判定`);
+}
+
+// ③ 静态资源与反代配置必须挂进 web 容器
+if (!/\.\/src\/web:\/usr\/share\/nginx\/html:ro/.test(compose)) {
+  bad.push('docker-compose.yml 未把 src/web 挂进 nginx 的站点根目录');
+}
+if (!/\.\/deploy\/nginx\.conf:\/etc\/nginx\/conf\.d\/default\.conf:ro/.test(compose)) {
+  bad.push('docker-compose.yml 未把 deploy/nginx.conf 挂进 nginx 配置目录');
+}
+
+// ④ 证书挂载目标必须与 nginx.conf 引用的一致（改名会导致容器起不来）
+for (const file of ['server.crt', 'server.key']) {
+  if (!new RegExp(`:/etc/nginx/ssl/${file.replace('.', '\\.')}:ro`).test(compose)) {
+    bad.push(`docker-compose.yml 未把 ${file} 挂到 /etc/nginx/ssl/${file}`);
+  }
+  if (!new RegExp(`/etc/nginx/ssl/${file.replace('.', '\\.')}`).test(nginxConf)) {
+    bad.push(`deploy/nginx.conf 未引用 /etc/nginx/ssl/${file}`);
+  }
+}
+// ca.key 只应留在宿主机（它签得出任何受信任的证书）
+if (/ca\.key/.test(compose)) bad.push('docker-compose.yml 挂载了 ca.key：CA 私钥不应进入容器');
+
+// ⑤ 反代头：真实客户端靠它还原；80 端口必须 301 到 https
+if (!/X-Forwarded-For\s+\$proxy_add_x_forwarded_for/.test(nginxConf)) {
+  bad.push('deploy/nginx.conf 未用 $proxy_add_x_forwarded_for 传递来源（反代后白名单会退化）');
+}
+if (!/return 301 https:\/\/\$host\$request_uri/.test(nginxConf)) {
+  bad.push('deploy/nginx.conf 未把 http 301 跳转到 https');
+}
+if (!/proxy_pass http:\/\/api:8080/.test(nginxConf)) {
+  bad.push('deploy/nginx.conf 未把 /api 反代到 api:8080');
+}
+
+// ⑥ nginx.conf 的语法自检（等价于轻量版 nginx -t 的常见错法：漏分号、括号不配对）。
+// 容器内跑不了 nginx -t，这里至少挡住「改配置时漏了分号」这类一改就起不来的错误。
+const conf = stripNginxComments(nginxConf);
+const braces = [...conf].reduce((acc, ch) => acc + (ch === '{' ? 1 : ch === '}' ? -1 : 0), 0);
+if (braces !== 0) bad.push(`deploy/nginx.conf 的 {} 不配对（差值 ${braces}）`);
+for (const [index, line] of conf.split('\n').entries()) {
+  const text = line.trim();
+  if (!text || text === '}' || text.endsWith('{') || text.endsWith(';')) continue;
+  bad.push(`deploy/nginx.conf 第 ${index + 1} 行缺少分号或块开头：${text}`);
 }
 
 /* ---------------- 输出 ---------------- */

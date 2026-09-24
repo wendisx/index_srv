@@ -6,6 +6,7 @@
  *   失败 { "ok": false, "error": { "code": "...", "message": "...", "details": ... } }
  */
 import { badRequest, httpError } from './errors.js';
+import { resolveClientIp } from './net.js'; 
 
 const JSON_TYPE = 'application/json; charset=utf-8';
 
@@ -101,13 +102,26 @@ export function applyCors(req, res, config) {
 }
 
 /**
- * 请求的来源地址：只取 socket 地址，**不信任 X-Forwarded-For** ——
- * 该头可被客户端随意伪造，除非前面有一层可信代理（本项目默认不假设）。
- * 因此白名单校验使用的是 TCP 连接的真实对端地址；若部署在反向代理之后，
- * 需要由代理层自行保证来源可信（见 docs/api.md 的权限提升白名单一节）。
+ * 请求的来源地址（白名单判定用的就是它）。
+ *
+ * 默认取 TCP 对端地址：`X-Forwarded-For` 可被客户端随意伪造，不采信。
+ * 部署在反向代理之后时，把代理地址填进 `server.trustedProxies` —— 只有来自这些
+ * 地址的请求才会按 XFF 还原真实客户端（走法见 core/net.js 的 resolveClientIp）。
  */
-export function clientIp(req) {
-  return req?.socket?.remoteAddress ?? '';
+export function clientIp(req, trustedProxies = []) {
+  return resolveClientIp(req?.socket?.remoteAddress ?? '', req?.headers?.['x-forwarded-for'], trustedProxies);
+}
+
+/**
+ * 请求携带的转发头（原样返回，没有的字段不出现）。
+ * 只用于日志对照代理链路，**不参与任何判定** —— 它可以被客户端随意伪造。
+ */
+export function forwardedHeaders(req) {
+  const headers = req?.headers ?? {};
+  return {
+    ...(headers['x-forwarded-for'] ? { xForwardedFor: headers['x-forwarded-for'] } : {}),
+    ...(headers['x-real-ip'] ? { xRealIp: headers['x-real-ip'] } : {}),
+  };
 }
 
 export function toBool(value, fallback = false) {

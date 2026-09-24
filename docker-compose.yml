@@ -1,42 +1,59 @@
-# index-srv 容器编排
+#
+# index-srv 容器编排（前后端分离）
 #
 # 使用：
-#   cp .env.example .env      # 按需修改端口、令牌与日志级别
+#   cp .env.example .env      # 按需修改端口、令牌与证书目录
 #   docker compose up -d --build
+#   # 浏览器访问 https://<宿主机地址>/（自签证书首次会警告，导入 ca.crt 后消失）
+#
+# 两个服务：
+#   web  nginx:stable-alpine —— TLS 终结 + 静态资源 + /api 反向代理，对外只暴露它
+#   api  node:lts-alpine3.23 —— 只提供 /api，不发布端口（外部无法绕过 nginx 直连）
 #
 # 约定：
-#   - ./data 为宿主机本地文件系统，挂载到容器 /app/data（配置与日志都落在这里）
-#   - 容器内端口固定 8080，宿主机端口由 INDEX_SRV_PORT 控制
-#   - 默认只监听 127.0.0.1，需对外暴露时把 INDEX_SRV_BIND 改为 0.0.0.0
+#   - ./data 挂载到 api 的 /app/data（配置与日志都落在这里）
+#   - 静态资源直接挂载仓库的 src/web，无构建步骤
+#   - 证书取自 ~/.ssl：server.{crt,key} 与 ca.crt（ca.key 不进容器）
+#   - 固定子网供 api 识别可信代理：改子网时必须同步 INDEX_SRV_TRUSTED_PROXIES
 
 services:
-  index-srv:
+  api:
     build:
       context: .
       dockerfile: Dockerfile
-    image: index-srv:${INDEX_SRV_TAG:-latest}
-    container_name: index-srv
+    image: index-srv-api:${INDEX_SRV_TAG:-latest}
+    container_name: index-srv-api
     restart: unless-stopped
 
     environment:
       TZ: ${TZ:-Asia/Shanghai}
       INDEX_SRV_ROOT: /app
       INDEX_SRV_HOST: 0.0.0.0
-      # 容器内监听端口，与下方映射的容器侧保持一致，请勿单独修改
+      # 容器内监听端口，与 nginx 的 proxy_pass 保持一致，请勿单独修改
       INDEX_SRV_PORT: "8080"
       INDEX_SRV_LOG_LEVEL: ${INDEX_SRV_LOG_LEVEL:-info}
       # 服务密钥：留空则面板只读（权限固定 3 user）；设置后可在界面提升为 super
       # 本机要写入时不要改这里，放到同目录的 .env（已被 .gitignore 忽略）：
       #   echo "INDEX_SRV_SECRET=$(openssl rand -hex 24)" >> .env
       INDEX_SRV_SECRET: ${INDEX_SRV_SECRET:-}
-      # 需要跨域访问 API 时开启（逗号分隔，* 表示全部放行）
-      # INDEX_SRV_CORS_ORIGINS: "https://nav.example.com"
+      # 可信代理：只有来自这些地址的请求才采信 X-Forwarded-For —— 白名单（含权限提升、
+      # 摘要链路、可信网段免密钥）据此看到真实客户端，而不是 nginx 容器的地址。
+      # 与下方 panel 网络的 subnet 必须一致。
+      INDEX_SRV_TRUSTED_PROXIES: ${INDEX_SRV_TRUSTED_PROXIES:-172.28.0.0/24}
+      # 放行网段（默认已是回环 + RFC 1918；只想放行 WireGuard 内网时按需收紧）：
+      # INDEX_SRV_PERMISSION_ALLOWLIST: "10.0.0.0/8,172.16.0.0/12"
+      # 浏览器只能走 http 时才需要（详见 docs/api.md 的「可信网段免密钥」）：
+      # INDEX_SRV_TRUSTED_BYPASS: "false"
 
-    ports:
-      - "${INDEX_SRV_BIND:-127.0.0.1}:${INDEX_SRV_PORT:-8080}:8080"
+    # 不发布端口：宿主机与外部只能经 nginx 访问 API
+    expose:
+      - "8080"
 
     volumes:
       - ./data:/app/data
+
+    networks:
+      - panel
 
     # 宿主机 data/ 属主不是 uid 1000 时，取消注释并填入实际 uid:gid
     # user: "1000:1000"
@@ -60,3 +77,67 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  web:
+    image: nginx:stable-alpine
+    # image: nginx:alpine 本地调试
+    container_name: index-srv-web
+    restart: unless-stopped
+
+    depends_on:
+      api:
+        condition: service_healthy
+
+    ports:
+      - "${INDEX_SRV_BIND:-0.0.0.0}:${INDEX_SRV_HTTP_PORT:-80}:80"
+      - "${INDEX_SRV_BIND:-0.0.0.0}:${INDEX_SRV_HTTPS_PORT:-443}:443"
+
+    volumes:
+      # 前端静态资源：直接挂仓库目录，改完刷新即可生效（无需重建镜像）
+      - ./src/web:/usr/share/nginx/html:ro
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # 证书：默认取当前用户的 ~/.ssl；证书在别处时把 ${HOME}/.ssl 换成绝对路径
+      # （在 .env 里设 INDEX_SRV_SSL_DIR 也行 —— 见 .env.example）
+      - ${INDEX_SRV_SSL_DIR:-${HOME}/.ssl}/server.crt:/etc/nginx/ssl/server.crt:ro
+      - ${INDEX_SRV_SSL_DIR:-${HOME}/.ssl}/server.key:/etc/nginx/ssl/server.key:ro
+      # ca.crt 只在启用双向 TLS 时用到；不打算用可以删掉这一行
+      - ${INDEX_SRV_SSL_DIR:-${HOME}/.ssl}/ca.crt:/etc/nginx/ssl/ca.crt:ro
+
+    networks:
+      - panel
+
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+
+    healthcheck:
+      # 顺带验证「https → /api 反代」整条链路（自签证书故跳过校验）
+      test:
+        - CMD
+        - wget
+        - -q
+        - -O
+        - /dev/null
+        - --no-check-certificate
+        - "https://127.0.0.1/api/health"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    security_opt:
+      - no-new-privileges:true
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  panel:
+    driver: bridge
+    ipam:
+      config:
+        # 固定子网：api 靠它识别「来自 nginx 的请求」。
+        # 改动这里必须同步修改 api 的 INDEX_SRV_TRUSTED_PROXIES。
+        - subnet: ${INDEX_SRV_NET_SUBNET:-172.28.0.0/24}

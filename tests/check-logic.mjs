@@ -410,5 +410,42 @@ for (const [allowlist, ip, expected, label] of [
   eq(net.isIpAllowed(allowlist, ip), expected, `白名单判定（${label}）`);
 }
 
+/* ---------------- 权限判定（api/permission.js 的纯逻辑分支） ---------------- */
+const { resolvePermission } = await import(pathToFileURL(`${ROOT}/src/api/permission.js`).href);
+const secretDigest = 'a'.repeat(64);
+for (const [config, headers, trusted, expected, label] of [
+  [{ auth: { secretDigest } }, {}, false, { level: 3, reason: 'anonymous' }, '已配置密钥 + 匿名 → user/anonymous'],
+  [{ auth: { secretDigest } }, { 'x-service-digest': secretDigest }, false, { level: 0, reason: 'digest' }, '已配置密钥 + 正确摘要 → super/digest'],
+  [{ auth: {} }, {}, false, { level: 3, reason: 'unconfigured' }, '未配置密钥 → user/unconfigured'],
+  [{ auth: { secretDigest } }, {}, true, { level: 0, reason: 'trusted-network' }, '可信网段 → super/trusted-network'],
+  [{ auth: {} }, {}, true, { level: 3, reason: 'unconfigured' }, '未配置密钥时可信网段仍只读（安全默认优先）'],
+  [{ auth: { secretDigest } }, { 'x-service-digest': 'b'.repeat(64) }, false, { level: 3, reason: 'anonymous' }, '摘要错误 → user/anonymous'],
+]) {
+  const actual = resolvePermission(config, headers, trusted);
+  if (actual.level !== expected.level || actual.reason !== expected.reason) {
+    bad.push(`权限判定（${label}）：期望 ${expected.level}/${expected.reason}，实际 ${actual.level}/${actual.reason}`);
+  }
+}
+
+/* ---------------- 真实客户端地址解析（core/net.js 的 resolveClientIp） ---------------- */
+// 反代（nginx）后 socket 对端恒为代理，白名单必须靠 XFF 才能看到真实客户端；
+// 但 XFF 又完全由客户端可控 —— 只有在「对端本身是可信代理」时才采信，且从右往左取。
+const PROXY = ['172.28.0.0/24'];
+for (const [label, peer, xff, proxies, expected] of [
+  ['没有可信代理时忽略伪造的 XFF', '203.0.113.9', '10.0.0.5', [], '203.0.113.9'],
+  ['对端是可信代理时采信单跳 XFF', '172.28.0.2', '10.0.0.5', PROXY, '10.0.0.5'],
+  ['客户端伪造的前置项被跳过（取右端真值）', '172.28.0.2', '203.0.113.9, 10.0.0.5', PROXY, '10.0.0.5'],
+  ['最右项本身是可信代理时不回溯（多级代理只认紧邻那台）', '172.28.0.2', '10.0.0.5, 172.28.0.3', PROXY, '172.28.0.3'],
+  // 回归：Docker 会把「宿主机来源」改写成网桥网关（172.28.0.1，落在可信段内）。
+  // 若实现「向右跳过可信代理继续往左找」，客户端伪造的左段就会被当成真实客户端。
+  ['最右项是可信网关时不得采信左侧伪造值', '172.28.0.1', '10.99.9.9, 172.28.0.1', PROXY, '172.28.0.1'],
+  ['XFF 缺失时回落到 socket 地址', '172.28.0.2', '', PROXY, '172.28.0.2'],
+  ['v4-mapped 形式统一归一化', '::ffff:172.28.0.2', '::ffff:192.168.1.7', PROXY, '192.168.1.7'],
+  ['对端不可信时不得借用 XFF 里的可信地址', '198.51.100.9', '172.28.0.2, 10.0.0.5', PROXY, '198.51.100.9'],
+  ['XFF 里的空白项被忽略', '172.28.0.2', ' , 10.0.0.5 , ', PROXY, '10.0.0.5'],
+]) {
+  eq(net.resolveClientIp(peer, xff, proxies), expected, `客户端地址解析（${label}）`);
+}
+
 console.log(bad.length ? `✘ ${bad.length} 项失败:\n - ${bad.join('\n - ')}` : '✔ 纯逻辑与数据层回归全部通过');
 process.exit(bad.length ? 1 : 0);

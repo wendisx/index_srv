@@ -54,51 +54,100 @@ INDEX_SRV_PORT=9000 INDEX_SRV_HOST=0.0.0.0 INDEX_SRV_LOG_LEVEL=debug npm start
 
 > 图标精灵 `src/web/icons/sprite.svg` 与 vendored 的 `src/web/vendor/codejar.js` 都已随仓库提交，**运行与部署都不需要 `npm install`**；只有增改图标（`npm install && npm run icons`）或升级 CodeJar（`npm install && npm run vendor`）时才需要它。参见 [docs/ui.md](docs/ui.md#8-扩展指南)。
 
-### 方式二：Docker Compose 部署
+### 方式二：Docker Compose 部署（前后端分离 + HTTPS）
 
-适合与其它服务共存于同一台宿主机，隔离依赖并统一管理。
+两个容器：`web`（`nginx:stable-alpine` —— TLS 终结 + 静态资源 + `/api` 反向代理）与 `api`（Node —— 只提供 API）。**`api` 不发布端口**，外部只能经 nginx 访问，无法绕过它直连后端。
 
 ```bash
 cd index_srv
 
-# 1. 准备环境变量
-cp .env.example .env
-vi .env                             # 按需修改端口、监听地址、令牌
+# 1. 准备证书（见下一节），确认 ~/.ssl 下有 server.crt / server.key / ca.crt
 
-# 2. 构建并启动
+# 2. 准备环境变量
+cp .env.example .env
+vi .env                             # 端口、证书目录、服务密钥
+
+# 3. 构建并启动（首次会构建 api 镜像）
 docker compose up -d --build
 
-# 3. 查看状态与日志
+# 4. 查看状态与日志（两个服务分别看）
 docker compose ps
-docker compose logs -f index-srv
+docker compose logs -f web
+docker compose logs -f api
 
-# 4. 健康检查（容器内置 HEALTHCHECK，也可手动验证）
-curl -s http://127.0.0.1:8080/api/health
+# 5. 健康检查（顺带验证 https → /api 反代整条链路）
+curl -sk https://127.0.0.1/api/health
 ```
+
+#### 证书准备（自签，放在 `~/.ssl`）
+
+`docker-compose.yml` 默认从 `~/.ssl` 读取（`ca.key` 不会进容器；证书在别处时设 `INDEX_SRV_SSL_DIR`）。用 openssl 生成一套带 **IP SAN** 的自签证书：
+
+```bash
+mkdir -p ~/.ssl && cd ~/.ssl
+
+# 1) 自签 CA（ca.key 只留在宿主机，用于签发与续期）
+openssl req -x509 -newkey rsa:4096 -nodes -days 3650 \
+  -keyout ca.key -out ca.crt -subj "/CN=index-srv-ca"
+
+# 2) 服务器证书：SAN 必须覆盖你实际访问用的地址
+#    （把 10.0.0.5 换成面板地址；用域名访问就写 DNS:nav.example.com）
+cat > san.cnf <<'EOF'
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+subjectAltName = IP:10.0.0.5, IP:127.0.0.1
+EOF
+
+openssl req -newkey rsa:2048 -nodes -keyout server.key -out server.csr -subj "/CN=index-srv"
+openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial \
+  -days 825 -out server.crt -extfile san.cnf
+```
+
+浏览器首次访问会提示证书不受信任：把 `~/.ssl/ca.crt` 导入系统/浏览器信任列表即可消除。这一步不只是「少点一次警告」——**HTTPS 是浏览器提供 Web Crypto（算密钥摘要）的前提**，而摘要正是权限提升与写操作的凭据。
+
+> 证书目录默认取 `${HOME}/.ssl`（compose 插值）。若从 cron / systemd 或不传 `HOME` 的环境执行 `docker compose`，请显式指定：`INDEX_SRV_SSL_DIR=/home/你的用户名/.ssl`。
+
+#### 白名单与来源地址（反代部署必读）
+
+- 后端看到的 socket 对端是 **nginx 容器**，不是真实客户端。所以 `.env` 里的 `INDEX_SRV_TRUSTED_PROXIES`（默认 `172.28.0.0/24`，即 compose 的 panel 子网）必须与实际子网一致 —— 它决定后端是否采信 `X-Forwarded-For` 去还原真实客户端。
+- **只在可信代理之后才采信 XFF**：其他来源发来的 `X-Forwarded-For` 一律忽略；即便对端可信，也只取**最右一项**（nginx 追加的那一跳，即它亲眼看到的对端），**不向左回溯** —— 回溯会在「最右项本身就是代理/网桥网关」时采信客户端自带的伪造值。多级代理时拿到的是紧邻那台代理的地址，需要放行它时把它写进 `INDEX_SRV_PERMISSION_ALLOWLIST`。
+- 注意 Docker 的 NAT 行为：从**宿主机自身**访问发布端口、或在 Docker Desktop 下，nginx 看到的来源是网桥网关（如 `172.28.0.1`），白名单判定的就是它（默认网段已包含）；Linux 上从其他主机连入时客户端真实 IP 由 DNAT 保留，不受影响。
+- 于是 `server.permissionAllowlist`（默认回环 + RFC 1918）判定的是**真实客户端地址**。例如只放行 WireGuard 内网：在 `.env` 里设 `INDEX_SRV_PERMISSION_ALLOWLIST=10.0.0.0/8`，并让 `INDEX_SRV_TRUSTED_PROXIES` 与 panel 子网保持一致。
+- 有了 HTTPS，浏览器就处在安全上下文，摘要链路正常工作，**不需要**开 `trustedNetworkBypass` —— 那条通道只留给「确实只能走 http 的内网」兜底（见 [docs/api.md](docs/api.md#2-鉴权与权限级别)）。
+
+#### 可选：双向 TLS（客户端也要证书）
+
+把 `deploy/nginx.conf` 里注释掉的两行（`ssl_client_certificate` / `ssl_verify_client`）打开：只有装了客户端证书的设备才能建立连接，比共享密钥更彻底，接入成本也更高。`ca.crt` 已经挂进容器备用。
 
 `.env` 中的关键变量：
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `INDEX_SRV_PORT` | `8080` | 宿主机映射端口（容器内固定 8080） |
-| `INDEX_SRV_BIND` | `127.0.0.1` | 宿主机监听地址，对外暴露改为 `0.0.0.0` |
+| `INDEX_SRV_BIND` | `0.0.0.0` | nginx 的宿主机监听地址（只允许本机访问时填 `127.0.0.1`） |
+| `INDEX_SRV_HTTP_PORT` | `80` | http 端口（只做 301 跳转到 https） |
+| `INDEX_SRV_HTTPS_PORT` | `443` | https 端口 |
+| `INDEX_SRV_SSL_DIR` | `$HOME/.ssl` | 证书目录（含 `server.crt` / `server.key` / `ca.crt`） |
+| `INDEX_SRV_NET_SUBNET` | `172.28.0.0/24` | panel 内部网络子网 |
+| `INDEX_SRV_TRUSTED_PROXIES` | `172.28.0.0/24` | 可信代理地址；必须与上面的子网一致 |
 | `INDEX_SRV_SECRET` | 空 | 服务密钥，非空时写操作需携带其摘要；留空则面板只读 |
 | `INDEX_SRV_LOG_LEVEL` | `info` | 日志级别 |
-| `INDEX_SRV_TAG` | `latest` | 镜像标签 |
+| `INDEX_SRV_TAG` | `latest` | api 镜像标签 |
 | `TZ` | `Asia/Shanghai` | 容器时区，影响日志时间与文件按天切分 |
 
 常用运维命令：
 
 ```bash
-docker compose restart index-srv            # 重启（手工改过数据文件后必须重启）
-docker compose down                         # 停止并移除容器（data/ 数据保留在宿主机）
-docker compose up -d --build                # 更新代码后重建
-docker compose exec index-srv ls -l data    # 查看数据目录
+docker compose restart api           # 重启后端（手工改过数据文件后必须重启）
+docker compose restart web           # 改过 deploy/nginx.conf 后重启前端
+docker compose down                  # 停止并移除容器（data/ 数据保留在宿主机）
+docker compose up -d --build         # 更新代码后重建（前端资源是挂载的，改完刷新即生效）
+docker compose exec api ls -l data   # 查看数据目录
 ```
 
-数据持久化：`docker-compose.yml` 已将 `./data` 挂载到容器 `/app/data`，配置与日志都落在宿主机 `./data` 下，删除容器不会丢失数据。
+数据持久化：`docker-compose.yml` 已将 `./data` 挂载到 `api` 容器的 `/app/data`，配置与日志都落在宿主机 `./data` 下，删除容器不会丢失数据。
 
-> 权限提示：容器以 `node` 用户（uid 1000）运行。若宿主机 `data/` 属主不是 uid 1000，会出现写入失败，任选其一：
+> 权限提示：`api` 容器以 `node` 用户（uid 1000）运行。若宿主机 `data/` 属主不是 uid 1000，会出现写入失败，任选其一：
 > ```bash
 > sudo chown -R 1000:1000 data          # 方案 A：调整宿主机目录属主
 > ```
@@ -109,7 +158,7 @@ docker compose exec index-srv ls -l data    # 查看数据目录
 ```bash
 # 密钥只在服务启动时读取一次，此后内存中只保留它的 SHA-256 摘要
 echo "INDEX_SRV_SECRET=$(openssl rand -hex 24)" >> .env
-docker compose restart index-srv
+docker compose restart api
 ```
 
 写操作需带密钥的 SHA-256 摘要（界面上的权限组件做的是同一件事）：
@@ -117,30 +166,13 @@ docker compose restart index-srv
 ```bash
 # 注意用 printf 而不是 echo：多一个换行符就会算出不同的摘要
 DIGEST=$(printf '%s' "$SECRET" | sha256sum | cut -d' ' -f1)
-curl -X PUT http://127.0.0.1:8080/api/config \
+curl -k -X PUT https://127.0.0.1/api/config \
   -H 'content-type: application/json' \
   -H "x-service-digest: $DIGEST" \
   -d '{"theme":"dark"}'
 ```
 
-容器默认只把端口发布到宿主机 `127.0.0.1:8080`，由反向代理（Nginx / Caddy）对外提供服务：
-
-```nginx
-# /etc/nginx/conf.d/index-srv.conf
-server {
-    listen 443 ssl;
-    server_name nav.example.com;
-
-    ssl_certificate     /etc/letsencrypt/live/nav.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/nav.example.com/privkey.pem;
-
-    location / {
-        proxy_pass http://127.0.0.1:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-}
-```
+前端的反向代理与 TLS 配置就在仓库里（`deploy/nginx.conf`，由 `web` 容器挂载）：静态资源直出、`/api/` 反代到 `api:8080`、80 端口 301 到 https。换域名/端口只需改这个文件（改完 `docker compose restart web`）。
 
 ## 配置说明
 
@@ -162,7 +194,10 @@ server {
     },
     "permissionAllowlist": [      // 权限提升白名单（IP / CIDR）：默认只放行回环与内网段
       "127.0.0.0/8", "::1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"
-    ]                             // 填 [] 表示不限制来源（谨慎：等于把安全责任全交给密钥）
+    ],                            // 填 [] 表示不限制来源（谨慎：等于把安全责任全交给密钥）
+    "digestAllowlistEnabled": true, // 摘要链路（写操作）是否同样受白名单约束；设 false 退回「只看摘要」
+    "trustedNetworkBypass": false, // 可信网段免密钥：白名单内来源免摘要即 super（http 下浏览器算不出摘要时的通道）
+    "trustedProxies": []          // 反向代理地址（IP / CIDR）：只有它们发来的请求才采信 X-Forwarded-For
   },
   "storage": {
     "dataDir": "data",                 // 数据根目录（相对项目根）
@@ -199,6 +234,9 @@ server {
 | `INDEX_SRV_REQUEST_LIMIT` | `server.requestLimitBytes` | 请求体上限（字节） |
 | `INDEX_SRV_CORS_ORIGINS` | `server.cors` | 逗号分隔的来源列表，设置后自动开启 CORS |
 | `INDEX_SRV_PERMISSION_ALLOWLIST` | `server.permissionAllowlist` | 权限提升白名单，逗号分隔的 IP / CIDR；设置后整份覆盖配置文件里的列表，留空时沿用配置文件（默认即回环 + 内网段） |
+| `INDEX_SRV_TRUSTED_PROXIES` | `server.trustedProxies` | 反向代理地址（IP / CIDR），逗号分隔；只有来自这些地址的请求才采信 `X-Forwarded-For` 还原真实客户端。容器部署默认由 compose 设为 panel 子网 |
+| `INDEX_SRV_DIGEST_ALLOWLIST` | `server.digestAllowlistEnabled` | 摘要链路是否同样受白名单约束（默认开启）；`false` 退回「只看摘要」，适合必须从公网 IP 写入的脚本 |
+| `INDEX_SRV_TRUSTED_BYPASS` | `server.trustedNetworkBypass` | 可信网段免密钥（默认关闭）；开启后白名单内来源免摘要即可提权与写入，适合浏览器只能走 http 的内网 |
 | `INDEX_SRV_DATA_DIR` | `storage.dataDir` | 数据根目录 |
 | `INDEX_SRV_LOG_DIR` | `storage.logDir` | 日志目录（相对 dataDir，也可给绝对路径） |
 | `INDEX_SRV_INTRO` | `storage.introPath` | 说明文档路径（相对 dataDir）：目录 → 多篇带目录栏；单个 `.md` → 只有一篇 |

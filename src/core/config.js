@@ -68,6 +68,13 @@ function splitList(value) {
     .filter(Boolean);
 }
 
+/** 布尔开关：未设置时用兜底值；`0 / false / no / off` 视为关闭，其余非空值视为开启 */
+function envFlag(name, fallback) {
+  const value = env(name);
+  if (value === undefined) return fallback;
+  return !['0', 'false', 'no', 'off'].includes(value.toLowerCase());
+}
+
 /**
  * 服务密钥摘要：密钥只从环境变量 INDEX_SRV_SECRET 读取，且只在启动时读一次，
  * 立即转成 SHA-256 摘要 —— 明文既不落配置文件也不留在内存；未配置时返回 null，
@@ -104,6 +111,18 @@ export function loadConfig() {
   const fileAllowlist = Array.isArray(base.server?.permissionAllowlist)
     ? base.server.permissionAllowlist
     : [];
+  // 摘要链路（带 x-service-digest 的写操作）是否同样受白名单约束：默认开启，
+  // 只在必须从公网 IP 写入时才关掉（见 api/guard.js）
+  const digestAllowlistEnabled = envFlag(
+    'INDEX_SRV_DIGEST_ALLOWLIST',
+    base.server?.digestAllowlistEnabled !== false,
+  );
+  // 可信网段免密钥：白名单内的来源无需摘要即视为 super（浏览器在 http 下算不出摘要时的通道）
+  const trustedNetworkBypass = envFlag('INDEX_SRV_TRUSTED_BYPASS', base.server?.trustedNetworkBypass === true);
+  // 反向代理地址：只有对端落在这些 IP / CIDR 内时，才按 X-Forwarded-For 还原真实客户端
+  // （前置 nginx 后 socket 对端恒为代理，白名单需要它才能看到真正的来源）
+  const envProxies = splitList(env('INDEX_SRV_TRUSTED_PROXIES'));
+  const fileProxies = Array.isArray(base.server?.trustedProxies) ? base.server.trustedProxies : [];
 
   return {
     name: base.name ?? 'index-srv',
@@ -121,8 +140,14 @@ export function loadConfig() {
         enabled: envOrigins.length > 0 || Boolean(base.server?.cors?.enabled),
         origins: envOrigins.length > 0 ? envOrigins : fileOrigins,
       },
-      // 权限提升白名单：判定在 api/permission.js，匹配规则在 core/net.js（空 = 不限制）
+      // 权限提升白名单：判定在 api/permission.js 与 api/guard.js，匹配规则在 core/net.js
       permissionAllowlist: envAllowlist.length > 0 ? envAllowlist : fileAllowlist,
+      // 摘要链路是否也受上面这份白名单约束（写操作；提升接口始终受约束）
+      digestAllowlistEnabled,
+      // 可信网段免密钥：白名单内来源免摘要即 super（开启前请读 docs/api.md 的说明）
+      trustedNetworkBypass,
+      // 反向代理地址：只有来自这里的请求才采信 X-Forwarded-For（见 core/net.js）
+      trustedProxies: envProxies.length > 0 ? envProxies : fileProxies,
     },
     storage: {
       dataDir,

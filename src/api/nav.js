@@ -3,6 +3,7 @@
  */
 import { ok } from '../core/http.js';
 import { countSitesByNamespace, countSitesByStatus, sortedView } from '../core/schema.js';
+import { isTrustedSource } from './guard.js';
 import { resolvePermission } from './permission.js';
 
 export function registerNavRoutes(router) {
@@ -17,7 +18,7 @@ export function registerNavRoutes(router) {
       settings: data.settings,
       // 新建服务的草稿骨架：随首屏一起下发，编辑器不必再发一次请求
       serviceSchema: config.serviceSchema,
-      permission: resolvePermission(config, req.headers),
+      permission: resolvePermission(config, req.headers, isTrustedSource(config, req)),
       namespaces: view.namespaces.map((namespace) => ({
         ...namespace,
         serviceCount: byNamespace.get(namespace.id) ?? 0,

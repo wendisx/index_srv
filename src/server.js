@@ -10,7 +10,7 @@
 import http from 'node:http';
 import { loadConfig } from './core/config.js';
 import { HttpError, httpError, notFound } from './core/errors.js';
-import { applyCommonHeaders, applyCors, fail } from './core/http.js';
+import { applyCommonHeaders, applyCors, clientIp, fail } from './core/http.js';
 import { createLogger } from './core/logger.js';
 import { Router } from './core/router.js';
 import { createStaticHandler } from './core/static.js';
@@ -33,6 +33,14 @@ logger.info('新建服务模板已就绪', {
   ...(config.serviceSchemaDetail ? { detail: config.serviceSchemaDetail } : {}),
 });
 
+// 可信网段免密钥会改变权限模型的凭据（网段取代密钥），必须在启动日志里显式可见，
+// 免得「为什么内网不用密钥就能写」变成一个没人知道的既有事实
+if (config.server.trustedNetworkBypass) {
+  logger.warn('可信网段免密钥已启用：白名单内的来源无需服务密钥即可提权与写入', {
+    allowlist: config.server.permissionAllowlist,
+  });
+}
+
 const store = new Store({
   dirs: { conf: config.storage.confDir, section: config.storage.sectionDir },
   legacyFile: config.storage.legacyFile,
@@ -53,14 +61,6 @@ const serveStatic = createStaticHandler({
   index: config.web.index,
   maxAge: config.web.cacheMaxAge,
 });
-
-function clientIp(req) {
-  const forwarded = req.headers['x-forwarded-for'];
-  if (typeof forwarded === 'string' && forwarded.length > 0) {
-    return forwarded.split(',')[0].trim();
-  }
-  return req.socket.remoteAddress ?? '';
-}
 
 function handleError(error, res) {
   if (res.headersSent) {
@@ -88,7 +88,7 @@ async function handleRequest(req, res) {
       path: pathname,
       status: res.statusCode,
       durationMs: Number(durationMs.toFixed(2)),
-      ip: clientIp(req),
+      ip: clientIp(req, config.server.trustedProxies),
     });
   });
 

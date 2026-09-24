@@ -103,8 +103,10 @@ index_srv/
 │       ├── nav.json          # GET /api/nav 响应样本（覆盖渲染全部分支）
 │       └── render.expected.json  # 渲染黄金基线
 ├── readme.md                 # 项目说明：快速开始、两种部署方式、配置与数据管理
-├── Dockerfile                # 容器镜像（node:lts-alpine3.23，非 root 运行）
-├── docker-compose.yml        # 容器编排（挂载 ./data，内置健康检查）
+├── Dockerfile                # api 容器镜像（node:lts-alpine3.23，非 root 运行）
+├── docker-compose.yml        # 前后端分离编排：web（nginx）+ api（node），固定子网与证书挂载
+├── deploy/
+│   └── nginx.conf            # TLS 终结 + 静态资源 + /api 反向代理（web 容器挂载）
 ├── .env.example              # 部署变量模板
 ├── .dockerignore             # 构建上下文裁剪（排除 data / docs / tests）
 ├── .gitignore                # 忽略 node_modules / data 运行期目录 / .env
@@ -443,7 +445,7 @@ flowchart LR
 | 文件（JSON Lines） | 每行一个 JSON 对象 | 采集与检索，`jq` 可直接处理 |
 
 - 文件按**类别 + 日期**切分：`app-YYYY-MM-DD.log`、`access-YYYY-MM-DD.log`；跨天时自动关闭旧流并创建新流。
-- 访问日志字段：`time` / `method` / `path` / `status` / `durationMs` / `ip`（来源 IP 优先取 `x-forwarded-for` 首段，否则取 socket 地址）。
+- 访问日志字段：`time` / `method` / `path` / `status` / `durationMs` / `ip`（与白名单同一套口径：`core/net.js` 的 `resolveClientIp` —— 默认取 socket 地址，仅在 `server.trustedProxies` 命中的对端之后才按 `X-Forwarded-For` 还原真实客户端）。
 - 访问日志默认只落盘；`log.level=debug` 时同步打印到 stdout。
 - 权限切换留痕：`POST /api/permission` 每次尝试都写一条应用日志 —— 放行 `info`、拦下 `warn`，消息形如 `权限切换 3 user -> 0 super pass`（拦下为 `... block`），字段含 `ip`（TCP 对端真实地址）、`xForwardedFor` / `xRealIp`（请求携带时原样记录）、`result` 与 `reason`。
 - 退出时 `logger.close()` 关闭全部文件流，避免日志丢失。
@@ -555,11 +557,13 @@ flowchart LR
 | 图标用 lucide + 生成 sprite | 与 shadcn/ui 风格一致；产物约 4 KB，运行期不加载图标库、不增加依赖 | 增改图标需执行 `npm run icons`；外链 sprite 多一次请求，且依赖现代浏览器的外部 `<use>` 支持 |
 | 直角 + 无动效 | 视觉克制、渲染开销低，符合工具类面板定位 | 视觉表现力有限 |
 | 页头半透明 + `backdrop-filter` | 与底图连成同一张背景，滚动时内容从毛玻璃后经过；不透明度由 `--header-veil` 一个令牌控制 | 需要浏览器额外合成，滚动开销略增；不支持 `backdrop-filter` 时回落到更高不透明度（`.app-header` 的兜底规则）；透明度取 50% 时 secondary 文字只剩 2.93:1（略低于 3:1 门槛），`check-static` 会提示并反解出达标取值 |
-| 权限提升白名单（`server.permissionAllowlist`） | 默认即放行回环与 RFC 1918 内网段：密钥即使泄漏，公网来源也无法借提升接口换取 super 会话级别 | 只按 TCP 对端地址判定（不信任 `X-Forwarded-For`），反向代理之后需由代理层保证来源可信；IPv6 仅支持精确地址；它不拦写操作 —— 写操作仍以摘要为准 |
+| 权限提升白名单（`server.permissionAllowlist`） | 默认即放行回环与 RFC 1918 内网段：密钥即使泄漏，公网来源也无法借提升接口换取 super 会话级别 | 按「真实客户端地址」判定：默认只有 socket 地址，前置代理后必须在 `server.trustedProxies` 里声明代理地址才会采信 `X-Forwarded-For`；IPv6 仅支持精确地址；写操作默认也受同一份白名单约束（`server.digestAllowlistEnabled`，置 false 退回「只看摘要」） |
+| 前后端分离（nginx 静态 + Node API） | TLS 终结、静态资源与反代交给 `nginx:stable-alpine`，`api` 容器不发布端口，外部无法绕过 nginx；浏览器因此处于安全上下文（Web Crypto 可用），摘要链路与 https 一起恢复 | 多一个容器与一份 `deploy/nginx.conf`；代理引入后必须正确配置 `server.trustedProxies`，否则白名单会退化成「只有代理地址」 |
+| 可信网段免密钥（`server.trustedNetworkBypass`） | 解开「浏览器在 http 下没有 Web Crypto、算不出摘要」造成的内网无法提权死结：把白名单网段本身当作凭据 | 凭据模型改变 —— 白名单内任何设备都可写、密钥对该网段失效，因此默认关闭，且开启时启动日志 `warn` + 提权 `reason: trusted-network` 留痕；未配置密钥时仍保持只读（安全默认优先） |
 | 视觉验证降级为 DOM 校验 + 人工验收 | 当前环境无任何浏览器内核，装内核属于重量级引入 | 真实布局、CSS 计算值与浏览器兼容性无法自动回归，需人工过一遍（见 §9.1） |
 | 密钥摘要鉴权（两侧各算一次 SHA-256） | 明文密钥不落配置文件、不进内存、不出现在网络请求里，两侧只交换摘要 | 摘要本身即凭据，泄露等于密钥泄露，必须配 HTTPS 或仅内网；未配置密钥时接口整体只读 |
 | 只读接口公开 | 面板可免登录直接浏览 | 公网暴露需依赖反向代理做访问控制 |
-| 单进程承载 API 与静态资源 | 部署最简单，无需额外 Web 服务器 | 静态资源性能依赖 Node；可前置 Nginx 缓解 |
+| Node 同时提供 API 与静态资源，容器部署再前置 nginx | 本地开发零依赖（`npm start` 即完整可用）；容器部署由 nginx 承担静态与 TLS，Node 只做业务 | 两种形态的静态资源路径/缓存策略要分别维护（后端 `web.cacheMaxAge` 与 nginx 的 `Cache-Control` 保持一致：no-cache + ETag） |
 
 ---
 

@@ -158,17 +158,21 @@ function permissionFlags(permission = state.nav?.permission ?? {}) {
 function renderPermission() {
   const permission = state.nav?.permission ?? {};
   const { superUser, secretRequired } = permissionFlags(permission);
+  // 可信网段免密钥：级别由来源网段决定，密钥与降级都不参与（见 docs/api.md）
+  const trusted = permission.reason === 'trusted-network';
 
   setText(dom.permValue, permission.level === undefined ? '—' : String(permission.level));
   setText(dom.permRole, permission.role ?? 'user');
   dom.permButton.classList.toggle('perm-box--super', superUser);
   setTitle(
     dom.permButton,
-    superUser
-      ? '当前为 super（可写），点击切回只读 user'
-      : secretRequired
-        ? '当前为 user（只读），点击输入服务密钥提升'
-        : '当前为 user（只读）；服务端未配置 INDEX_SRV_SECRET，无法提升',
+    trusted
+      ? '当前为 super（可写）：来源在白名单网段内，服务端免密钥放行'
+      : superUser
+        ? '当前为 super（可写），点击切回只读 user'
+        : secretRequired
+          ? '当前为 user（只读），点击输入服务密钥提升'
+          : '当前为 user（只读）；服务端未配置 INDEX_SRV_SECRET，无法提升',
   );
 
   // 写操作入口：仅 super 可见（新建命名空间 / 添加服务 / 编辑服务）
@@ -189,6 +193,15 @@ function renderPermission() {
 function onPermButtonClick() {
   const { superUser, secretRequired } = permissionFlags();
 
+  // 可信网段免密钥：级别由网络决定，「切回只读」在这里无意义（下次请求服务端又发 0）
+  if (state.nav?.permission?.reason === 'trusted-network') {
+    showAlert({
+      type: 'info',
+      topic: '可信网段免密钥',
+      content: '当前来源在白名单网段内，服务端直接下发 super；权限由网络决定，无需密钥',
+    });
+    return;
+  }
   if (superUser) {
     dropPermission();
     return;

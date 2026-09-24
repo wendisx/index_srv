@@ -12,3 +12,6 @@ readme.md
 tests
 .env
 .env.example
+
+# 反代配置由 web 容器挂载使用，不需要进 api 镜像
+deploy

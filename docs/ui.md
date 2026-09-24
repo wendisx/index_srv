@@ -277,6 +277,7 @@ boot()
   - 当前为 `3`（user）：弹出居中密钥弹窗，输入后 Enter 提交。客户端先用 `digest.js` 把密钥算成 SHA-256 摘要，只把摘要发出去（`POST /api/permission`），通过后把**摘要**（不是明文）存入 `localStorage`（键 `index-srv:digest`）并重拉 `/api/nav`。
   - 当前为 `0`（super）：直接清掉本地摘要、重拉 `/api/nav`，即切回只读。
   - 服务端未配置 `INDEX_SRV_SECRET` 时不存在 super，点击只提示原因。
+  - **可信网段免密钥模式**（服务端 `server.trustedNetworkBypass` 开启且来源在白名单内）：服务端直接下发 `level: 0` / `reason: \"trusted-network\"`，组件提示语变成「来源在白名单网段内，服务端免密钥放行」，点击不再走密钥弹窗也不做假降级（级别由网络决定），只弹一条说明。
 - **权限与写入口的联动**：`renderPermission()` 是同一条链上的开关 —— 它把 `[+]` 入口按 `superUser` 显隐，并把 `canEdit` 传给 `renderTree()`（目录树的入口与空命名空间策略都据此决定），因此**从 3 提升到 0 后目录树会整体重绘出写入口**，切回只读时又全部收起。
 - **新建命名空间**：点侧栏头部的 `[+]` → 复用输入弹窗（模式 `namespace`，`type="text"` + `placeholder`）→ Enter 调 `POST /api/namespaces`（只传 `name`，`id` 与 `order` 由服务端生成）→ 成功后把该 id 从折叠集合中移除并**重拉 `/api/nav`**：新条目立即出现在列表里并保持展开，页脚的 `LAST MODIFY` 同步刷新成落盘时间。
 - **添加服务**：点某命名空间行尾的 `[+]` → 打开**同一个**编辑器弹窗（样式与编辑完全一致，没有任何额外交互元素）：初始草稿由 `createDraft(namespaceId, state.nav.serviceSchema)` 生成 —— 骨架来自服务端的 `data/conf/service.schema.json`（启动时读入、随 `/api/nav` 下发），因此**加字段不用改代码**：在该文件里加一个键，新建草稿里就多一个占位。字段取值原则是类型零值：字符串 `''` / 数组 `[]` / 对象 `{}` / 数字 `0`；`status` 与 `enabled` 例外取模型默认值（`running` / `true`），因为它们的"零值"分别是「非法枚举」与「建出来就是隐藏的」。骨架不含 `id`（主键由服务端生成，想自定也可以写在模板里）与 `namespaceId`（归属是「点开的那个命名空间」这一上下文，由客户端注入，模板里写了也会被忽略）。拿不到下发模板时（例如连的是旧服务端）由 `editor.js` 的内置兜底顶上 —— 三处骨架必须字面一致，`check-static` 有漂移断言。
@@ -364,7 +365,7 @@ boot()
 
 - 目标浏览器：支持 ES Module 与 CSS 自定义属性的现代浏览器（Chrome/Edge 90+、Firefox 90+、Safari 15+）。
 - 依赖的现代 API：`fetch`、`matchMedia`、`URLSearchParams`、`<template>`、`localStorage`、`CSS.escape`。
-- **密钥摘要依赖 Web Crypto（`crypto.subtle`）**：浏览器只在安全上下文（`https` 或 `localhost`）提供它。通过局域网明文 HTTP 访问时该 API 不可用，此时点击权限组件会提示改用 https 或 localhost —— 这是浏览器的既定限制，不是实现缺陷。
+- **密钥摘要依赖 Web Crypto（`crypto.subtle`）**：浏览器只在安全上下文（`https` 或 `localhost`）提供它。通过局域网明文 HTTP 访问时该 API 不可用，此时点击权限组件会提示改用 https 或 localhost —— 这是浏览器的既定限制，不是实现缺陷。容器部署已自带 nginx + TLS（`deploy/nginx.conf`），导入自签 CA 后即为安全上下文；确实只能走 http 的可信内网可以改用 `server.trustedNetworkBypass`（白名单内免摘要即 super，见 `docs/api.md`）。
 - 图标引用：外链 `<use href="./icons/sprite.svg#名称">` 依赖浏览器对「外部 SVG 片段引用」的支持，上述目标浏览器均已支持；sprite 与页面同源（同域静态资源），无需 CORS。
 - 可访问性：图标按钮提供 `aria-label` 与 `.sr-only` 文本；目录树 `aria-expanded` 反映折叠状态；服务项 `aria-label` 附带状态文案（避免只用颜色传达信息）；详情面板 `aria-live="polite"`；`:focus-visible` 统一使用 `--ring` 作为焦点环。
 - 响应式：`900px` 以下主体改为上下堆叠、工具栏换行并让搜索框占满整行。

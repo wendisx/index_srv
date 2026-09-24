@@ -18,6 +18,9 @@ hidden: false
 | `INDEX_SRV_DATA_DIR` | `storage.dataDir` | 数据根目录 |
 | `INDEX_SRV_INTRO` | `storage.introPath` | 说明文档路径（相对 dataDir）：目录 → 多篇带目录栏，单个 `.md` → 只有一篇 |
 | `INDEX_SRV_PERMISSION_ALLOWLIST` | `server.permissionAllowlist` | 权限提升白名单（逗号分隔的 IP / CIDR），设置后整份覆盖配置文件里的列表；留空时沿用配置文件（默认即回环 + 内网段） |
+| `INDEX_SRV_DIGEST_ALLOWLIST` | `server.digestAllowlistEnabled` | 摘要链路（写操作）是否同样受白名单约束，默认开启；`false` 退回「只看摘要」，适合必须从公网 IP 写入的脚本 |
+| `INDEX_SRV_TRUSTED_BYPASS` | `server.trustedNetworkBypass` | 可信网段免密钥，默认关闭；开启后白名单内来源免摘要即可提权与写入（浏览器只能走 http 内网时的通道） |
+| `INDEX_SRV_TRUSTED_PROXIES` | `server.trustedProxies` | 反向代理地址（IP / CIDR），逗号分隔；只有来自这些地址的请求才采信 `X-Forwarded-For` 还原真实客户端（容器部署默认由 compose 设为 panel 子网） |
 | `INDEX_SRV_LOG_LEVEL` | `log.level` | 日志级别（debug / info / warn / error） |
 
 其余变量：`INDEX_SRV_CONFIG`（指定另一份配置文件）、`INDEX_SRV_ROOT`（项目根目录）、`INDEX_SRV_REQUEST_LIMIT`（请求体上限）、`INDEX_SRV_CORS_ORIGINS`（逗号分隔的来源列表，设置后自动开启 CORS）、`INDEX_SRV_LOG_DIR`、`INDEX_SRV_WEB_DIR`、`INDEX_SRV_WEB_CACHE`。
@@ -43,7 +46,10 @@ hidden: false
 | `server.port` | `8080` | 服务端口 |
 | `server.requestLimitBytes` | `262144` | 请求体上限（256 KiB） |
 | `server.cors` | 关闭 | 未配置来源时不返回 CORS 头 |
-| `server.permissionAllowlist` | 回环 + 内网段 | 只放行 `127.0.0.0/8`、`::1`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16` 的来源；公网来源调提升接口返回 403（填 `[]` 表示不限制） |
+| `server.permissionAllowlist` | 回环 + 内网段 | 只放行 `127.0.0.0/8`、`::1`、`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16` 的来源；公网来源调提升接口或写接口返回 403（填 `[]` 表示不限制） |
+| `server.digestAllowlistEnabled` | `true` | 摘要链路（写操作）是否同样受上面这份白名单约束；置 `false` 退回「只看摘要」 |
+| `server.trustedNetworkBypass` | `false` | 白名单内的来源是否免摘要即 super（提权与写入都放行）；开启前请先读 `docs/api.md` 的说明 |
+| `server.trustedProxies` | `[]` | 反向代理地址；只有它们的请求才采信 `X-Forwarded-For`（容器部署由 compose 设为 panel 子网） |
 | `storage.dataDir` | `data` | 数据根目录（下含 `conf/` `section/` `intro/` `log/`） |
 | `web.cacheMaxAge` | `0` | 静态资源 no-cache + ETag 协商缓存 |
 | `log.level` | `info` | stdout 文本 + 文件 JSON Lines，按天切分 |
