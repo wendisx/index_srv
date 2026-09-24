@@ -390,5 +390,25 @@ for (const [patch, expected] of [
   }
 }
 
+/* ---------------- 权限提升白名单（core/net.js 的纯函数） ---------------- */
+const net = await import(pathToFileURL(`${ROOT}/src/core/net.js`).href);
+for (const [allowlist, ip, expected, label] of [
+  [[], '10.0.0.5', true, '空列表不限制'],
+  [undefined, '10.0.0.5', true, '未配置（undefined）不限制'],
+  [['192.168.1.0/24'], '192.168.1.55', true, 'CIDR 命中'],
+  [['192.168.1.0/24'], '192.168.2.1', false, 'CIDR 之外不命中'],
+  [['192.168.1.0/24'], '::ffff:192.168.1.55', true, 'v4-mapped 归一化后命中'],
+  [['127.0.0.1'], '127.0.0.1', true, '单地址精确命中'],
+  [['127.0.0.1'], '127.0.0.2', false, '单地址不命中邻近地址'],
+  [['0.0.0.0/0'], '8.8.8.8', true, '前缀 0 放行全部'],
+  [['10.0.0.0/8', '192.168.0.0/16'], '192.168.9.9', true, '多规则任一命中'],
+  [['10.0.0.0/33'], '10.0.0.1', false, '前缀越界按不命中处理'],
+  [['10.0.0.999'], '10.0.0.1', false, '非法地址按不命中处理'],
+  [['192.168.1.0/24'], '', false, '取不到来源地址时不放行'],
+  [['::1'], '::1', true, 'IPv6 按完整地址精确匹配'],
+]) {
+  eq(net.isIpAllowed(allowlist, ip), expected, `白名单判定（${label}）`);
+}
+
 console.log(bad.length ? `✘ ${bad.length} 项失败:\n - ${bad.join('\n - ')}` : '✔ 纯逻辑与数据层回归全部通过');
 process.exit(bad.length ? 1 : 0);

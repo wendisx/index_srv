@@ -10,6 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { parseDocument } from './dom-shim.mjs';
+import { isIpAllowed } from '../src/core/net.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const WEB = path.join(ROOT, 'src', 'web');
@@ -655,6 +656,51 @@ for (const [pattern, message] of [
 }
 if (/titleOf/.test(introApi)) {
   bad.push('src/api/intro.js 仍引用 titleOf：侧栏名称已改由 frontmatter 的 label 提供');
+}
+
+/* ---------------- 18. 权限提升白名单：配置就位且先于密钥校验 ---------------- */
+// server.permissionAllowlist（IP / CIDR）是唯一能拦下「提升」动作的开关。
+// 三种情况会让它静默失效：配置里漏掉这个键、默认列表不再覆盖常规内网网段
+// （等于没设限制）、或把判定写在摘要校验之后（非白名单来源仍会进入密钥比对流程）。
+const defaultConfig = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'config', 'default.json'), 'utf8'));
+const defaultAllow = defaultConfig.server?.permissionAllowlist;
+if (!Array.isArray(defaultAllow)) {
+  bad.push('src/config/default.json 缺少 server.permissionAllowlist（IP / CIDR 数组）');
+} else {
+  // 默认列表用真实的匹配函数实算：必须放行回环（本机开发/测试提得了权）、
+  // 覆盖三块 RFC 1918 内网段、并拦下公网地址
+  for (const [ip, expected, label] of [
+    ['127.0.0.1', true, '回环地址（本机开发与测试依赖它）'],
+    ['::ffff:127.0.0.1', true, 'v4-mapped 回环'],
+    ['::1', true, 'IPv6 回环'],
+    ['10.1.2.3', true, '10.0.0.0/8'],
+    ['172.16.5.5', true, '172.16.0.0/12'],
+    ['172.31.255.254', true, '172.16/12 上边界'],
+    ['192.168.31.7', true, '192.168.0.0/16'],
+    ['172.32.0.1', false, '172.16/12 之外（该地址属公网）'],
+    ['8.8.8.8', false, '公网地址'],
+  ]) {
+    const actual = isIpAllowed(defaultAllow, ip);
+    if (actual !== expected) {
+      bad.push(`默认白名单对 ${ip}（${label}）的判定应为 ${expected}，实际 ${actual}`);
+    }
+  }
+}
+const configSrc = stripJs(fs.readFileSync(path.join(ROOT, 'src', 'core', 'config.js'), 'utf8'));
+// 注意不能只查「名字出现过」：读进来的 envAllowlist 若不参与赋值，白名单照样静默失效
+if (!/INDEX_SRV_PERMISSION_ALLOWLIST/.test(configSrc)) {
+  bad.push('core/config.js 未读取环境变量 INDEX_SRV_PERMISSION_ALLOWLIST');
+}
+if (!/permissionAllowlist:\s*envAllowlist\.length/.test(configSrc)) {
+  bad.push('core/config.js 的 permissionAllowlist 未取自环境变量列表（设置 INDEX_SRV_PERMISSION_ALLOWLIST 不会生效）');
+}
+const permissionSrc = stripJs(fs.readFileSync(path.join(ROOT, 'src', 'api', 'permission.js'), 'utf8'));
+const allowAt = permissionSrc.indexOf('isIpAllowed(');
+const digestCheckAt = permissionSrc.indexOf('isDigestFormat(');
+if (allowAt < 0) {
+  bad.push('api/permission.js 的提升接口未做来源白名单判定（permissionAllowlist 形同虚设）');
+} else if (digestCheckAt >= 0 && allowAt > digestCheckAt) {
+  bad.push('api/permission.js 把白名单判定放在了密钥校验之后（非白名单来源仍会进入密钥比对）');
 }
 
 /* ---------------- 输出 ---------------- */

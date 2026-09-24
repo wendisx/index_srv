@@ -100,6 +100,16 @@ export function applyCors(req, res, config) {
   return false;
 }
 
+/**
+ * 请求的来源地址：只取 socket 地址，**不信任 X-Forwarded-For** ——
+ * 该头可被客户端随意伪造，除非前面有一层可信代理（本项目默认不假设）。
+ * 因此白名单校验使用的是 TCP 连接的真实对端地址；若部署在反向代理之后，
+ * 需要由代理层自行保证来源可信（见 docs/api.md 的权限提升白名单一节）。
+ */
+export function clientIp(req) {
+  return req?.socket?.remoteAddress ?? '';
+}
+
 export function toBool(value, fallback = false) {
   if (value === undefined || value === null || value === '') return fallback;
   if (typeof value === 'boolean') return value;

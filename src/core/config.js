@@ -98,6 +98,12 @@ export function loadConfig() {
   const service = readServiceSchema(serviceSchemaFile);
   const envOrigins = splitList(env('INDEX_SRV_CORS_ORIGINS'));
   const fileOrigins = Array.isArray(base.server?.cors?.origins) ? base.server.cors.origins : [];
+  // 权限提升白名单（IP / CIDR）：空列表 = 不限制，非空则只放行这些来源。
+  // 与 CORS 同一套写法：环境变量给出时整份覆盖配置文件里的列表
+  const envAllowlist = splitList(env('INDEX_SRV_PERMISSION_ALLOWLIST'));
+  const fileAllowlist = Array.isArray(base.server?.permissionAllowlist)
+    ? base.server.permissionAllowlist
+    : [];
 
   return {
     name: base.name ?? 'index-srv',
@@ -115,6 +121,8 @@ export function loadConfig() {
         enabled: envOrigins.length > 0 || Boolean(base.server?.cors?.enabled),
         origins: envOrigins.length > 0 ? envOrigins : fileOrigins,
       },
+      // 权限提升白名单：判定在 api/permission.js，匹配规则在 core/net.js（空 = 不限制）
+      permissionAllowlist: envAllowlist.length > 0 ? envAllowlist : fileAllowlist,
     },
     storage: {
       dataDir,

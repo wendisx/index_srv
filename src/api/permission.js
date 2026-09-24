@@ -8,11 +8,17 @@
  *   - 请求携带有效密钥摘要             → 0
  *   - 其它情况                        → 3
  *
+ * 提升入口的来源限制：`server.permissionAllowlist`（IP / CIDR，空 = 不限制）非空时，
+ * **POST /api/permission 只接受白名单内的来源**（403），其余来源连密钥比对都不进入 ——
+ * 这样即使密钥泄露，非信任网段也无法借提升接口换取 super 会话级别。
+ * 注意白名单约束的是「提升」这个动作：写操作本身仍以摘要为准（见 docs/api.md）。
+ *
  * 前端交互：点击权限组件时，若当前为 3 则弹出密钥输入框、提交摘要后切换为 0；
  * 若当前为 0 则直接清掉本地摘要切回 3（服务端不保存任何会话状态）。
  */
-import { unauthorized, validationError } from '../core/errors.js';
-import { ok, readJsonBody } from '../core/http.js';
+import { forbidden, unauthorized, validationError } from '../core/errors.js';
+import { clientIp, ok, readJsonBody } from '../core/http.js';
+import { isIpAllowed } from '../core/net.js';
 import { isDigestFormat, verifyDigest } from './guard.js';
 import { requireObject, requireString } from './validate.js';
 
@@ -40,6 +46,13 @@ export function registerPermissionRoutes(router) {
 
   router.post('/api/permission', async (ctx) => {
     const { req, res, config } = ctx;
+
+    // 来源白名单先于密钥校验：非白名单来源不该进入密钥比对流程，
+    // 顺带避免把「摘要格式对不对」这类信息回给它们
+    if (!isIpAllowed(config.server?.permissionAllowlist, clientIp(req))) {
+      throw forbidden('当前来源地址不在权限提升白名单内（server.permissionAllowlist）');
+    }
+
     const body = requireObject(await readJsonBody(req, { limit: config.server.requestLimitBytes }));
     const digest = requireString(body.digest, 'digest', { max: 64 });
 

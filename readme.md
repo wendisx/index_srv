@@ -159,7 +159,10 @@ server {
     "cors": {
       "enabled": false,           // 是否允许跨域
       "origins": []               // 允许的来源，空数组表示不限制
-    }
+    },
+    "permissionAllowlist": [      // 权限提升白名单（IP / CIDR）：默认只放行回环与内网段
+      "127.0.0.0/8", "::1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"
+    ]                             // 填 [] 表示不限制来源（谨慎：等于把安全责任全交给密钥）
   },
   "storage": {
     "dataDir": "data",                 // 数据根目录（相对项目根）
@@ -195,6 +198,7 @@ server {
 | `INDEX_SRV_PORT` | `server.port` | 监听端口 |
 | `INDEX_SRV_REQUEST_LIMIT` | `server.requestLimitBytes` | 请求体上限（字节） |
 | `INDEX_SRV_CORS_ORIGINS` | `server.cors` | 逗号分隔的来源列表，设置后自动开启 CORS |
+| `INDEX_SRV_PERMISSION_ALLOWLIST` | `server.permissionAllowlist` | 权限提升白名单，逗号分隔的 IP / CIDR；设置后整份覆盖配置文件里的列表，留空时沿用配置文件（默认即回环 + 内网段） |
 | `INDEX_SRV_DATA_DIR` | `storage.dataDir` | 数据根目录 |
 | `INDEX_SRV_LOG_DIR` | `storage.logDir` | 日志目录（相对 dataDir，也可给绝对路径） |
 | `INDEX_SRV_INTRO` | `storage.introPath` | 说明文档路径（相对 dataDir）：目录 → 多篇带目录栏；单个 `.md` → 只有一篇 |

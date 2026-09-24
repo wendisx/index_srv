@@ -806,7 +806,99 @@ async function checkIntro() {
   );
 }
 
+/* ---------------- 模式六：权限提升的来源白名单（server.permissionAllowlist） ---------------- */
+
+/**
+ * 白名单只约束「提升」这一个动作：
+ *   - 环境变量 INDEX_SRV_PERMISSION_ALLOWLIST 与配置文件 server.permissionAllowlist 两种写法都生效；
+ *   - 非白名单来源调 POST /api/permission → 403，且不进入密钥比对；
+ *   - GET /api/permission 与写操作仍按摘要判定（白名单不是授权机制，只是提升入口的网段限制）。
+ */
+async function checkPermissionAllowlist() {
+  const digest = digestOf(TEST_SECRET);
+  const elevate = (base) =>
+    fetch(`${base}/api/permission`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ digest }),
+    });
+
+  /* ① 环境变量把本机排除在外（白名单只含一个不相干的网段） */
+  await withServer(
+    { INDEX_SRV_SECRET: TEST_SECRET, INDEX_SRV_PERMISSION_ALLOWLIST: '10.99.0.0/16' },
+    async ({ base }) => {
+      const blocked = await elevate(base);
+      if (blocked.status !== 403) bad.push(`白名单外来源提升应 403，实际 ${blocked.status}`);
+      else {
+        const body = await blocked.json().catch(() => ({}));
+        if (body.error?.code !== 'forbidden') {
+          bad.push(`白名单外来源提升的错误码应为 forbidden，实际 ${body.error?.code}`);
+        }
+      }
+
+      const permission = await (
+        await fetch(`${base}/api/permission`, { headers: { 'x-service-digest': digest } })
+      ).json();
+      if (permission.data?.level !== 0) {
+        bad.push('白名单不应影响 GET /api/permission 的摘要判定（查询没有副作用）');
+      }
+      const write = await fetch(`${base}/api/config`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json', 'x-service-digest': digest },
+        body: JSON.stringify({ title: '白名单下的写入' }),
+      });
+      if (write.status !== 200) {
+        bad.push(`白名单不应影响写操作（写操作以摘要为准），实际 ${write.status}`);
+      }
+    },
+  );
+
+  /* ② 白名单放行本机：提升恢复正常 */
+  await withServer(
+    { INDEX_SRV_SECRET: TEST_SECRET, INDEX_SRV_PERMISSION_ALLOWLIST: '127.0.0.1/32' },
+    async ({ base }) => {
+      const elevated = await elevate(base);
+      const body = await elevated.json().catch(() => ({}));
+      if (elevated.status !== 200 || body.data?.level !== 0) {
+        bad.push(`白名单内来源应能提升（200 / level 0），实际 ${elevated.status} / ${body.data?.level}`);
+      }
+    },
+  );
+
+  /* ③ 配置文件写法（默认用法）：拷一份默认配置，把白名单写进 server 段 */
+  const defaults = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'config', 'default.json'), 'utf8'));
+  const configFile = path.join(os.tmpdir(), `index-srv-allowlist-${process.pid}.json`);
+  fs.writeFileSync(
+    configFile,
+    `${JSON.stringify({ ...defaults, server: { ...defaults.server, permissionAllowlist: ['10.99.0.0/16'] } }, null, 2)}\n`,
+  );
+  try {
+    await withServer({ INDEX_SRV_CONFIG: configFile, INDEX_SRV_SECRET: TEST_SECRET }, async ({ base }) => {
+      const blocked = await elevate(base);
+      if (blocked.status !== 403) {
+        bad.push(`配置文件里的 permissionAllowlist 未生效：提升应 403，实际 ${blocked.status}`);
+      }
+    });
+  } finally {
+    fs.rmSync(configFile, { force: true });
+  }
+
+  /* ④ 默认配置必须放行回环：本机开发与上面的用例都依赖它
+        （默认列表到底覆盖了哪些网段，由 check-static 用 net.js 的匹配函数实算把关） */
+  if (!(defaults.server?.permissionAllowlist ?? []).includes('127.0.0.0/8')) {
+    bad.push(
+      `默认配置的 permissionAllowlist 应放行回环（127.0.0.0/8），实际 ${JSON.stringify(defaults.server?.permissionAllowlist)}`,
+    );
+  }
+}
+
 async function main() {
+  await checkReadOnlyMode();
+  await checkSecretMode();
+  await checkPermissionAllowlist();
+  await checkLegacyMigration();
+  await checkServiceSchema();
+  await checkIntro();
   await checkReadOnlyMode();
   await checkSecretMode();
   await checkLegacyMigration();
@@ -818,7 +910,7 @@ async function main() {
     process.exit(1);
   }
   console.log(
-    '✔ 端到端冒烟通过（页面 + 全部静态资源 + 只读模式 + 密钥鉴权 + 数据往返 + 分区写回 + 旧文件迁移 + 草稿骨架可配置 + 说明文档两种形态 + 新建命名空间 + 编辑服务 + 自定义字段 + 无删除接口 + 穿越防护 + 协商缓存）',
+    '✔ 端到端冒烟通过（页面 + 全部静态资源 + 只读模式 + 密钥鉴权 + 权限提升白名单 + 数据往返 + 分区写回 + 旧文件迁移 + 草稿骨架可配置 + 说明文档两种形态 + 新建命名空间 + 编辑服务 + 自定义字段 + 无删除接口 + 穿越防护 + 协商缓存）',
   );
 }
 
